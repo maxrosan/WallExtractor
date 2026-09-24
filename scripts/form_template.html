@@ -1,0 +1,263 @@
+<title>Revisão de Esquadrias</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1F2328; --muted:#6C7684; --line:#D8DAD3;
+  --accent:#2457A6; --accent-ink:#FFFFFF; --door:#2E8B57; --window:#3B6FD9; --wall:#C0392B; --warn:#B7791F; --warn-bg:#FBF3E4;
+  --ok-bg:#E9F4EE; --focus:#2457A6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#161A20; --panel:#1E232B; --ink:#E6E8EC; --muted:#9AA3B2; --line:#343B47;
+    --accent:#7FA6F0; --accent-ink:#0F1521; --door:#5CC48A; --window:#7FA6F0; --wall:#E5685A; --warn:#E0B15A; --warn-bg:#2C2617;
+    --ok-bg:#1B2A22; --focus:#7FA6F0;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#161A20; --panel:#1E232B; --ink:#E6E8EC; --muted:#9AA3B2; --line:#343B47;
+  --accent:#7FA6F0; --accent-ink:#0F1521; --door:#5CC48A; --window:#7FA6F0; --wall:#E5685A; --warn:#E0B15A; --warn-bg:#2C2617;
+  --ok-bg:#1B2A22; --focus:#7FA6F0;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.5;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 60px;padding-inline:16px}
+h1{font-size:1.45rem;font-weight:600;margin:0 0 4px;text-wrap:balance}
+h2{font-size:1.15rem;font-weight:600;margin:0;text-wrap:balance}
+h3{font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+p{margin:0}
+.lead{color:var(--muted);max-width:68ch}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.topbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 0 16px;border-bottom:1px solid var(--line);margin-bottom:20px}
+.status{font-size:.85rem;color:var(--muted)}
+.status.saving{color:var(--warn)} .status.err{color:var(--wall)}
+.plant{margin:0 0 36px;padding:0 0 28px;border-bottom:1px solid var(--line)}
+.plant-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+.meta{font-size:.85rem;color:var(--muted)}
+.qs{background:var(--warn-bg);border-left:3px solid var(--warn);padding:10px 12px;margin:0 0 14px;font-size:.92rem}
+.qs ul{margin:4px 0 0;padding-left:18px}
+.ok-note{background:var(--ok-bg);border-left:3px solid var(--door);padding:10px 12px;margin:0 0 14px;font-size:.92rem}
+.figure{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;cursor:crosshair;user-select:none}
+.figure img{display:block;width:100%;height:auto;max-width:100%}
+.mk{position:absolute;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);color:#fff;font:600 11px/18px "IBM Plex Mono",monospace;text-align:center;cursor:pointer}
+.mk.door{background:var(--door)} .mk.window{background:var(--window)} .mk.wall{background:var(--wall)}
+.mk.low{border-style:dashed} .mk.active{outline:3px solid var(--accent);outline-offset:1px}
+.mk.new{width:24px;height:24px;border-color:var(--accent)}
+.pop{position:absolute;transform:translate(-50%,8px);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px;display:flex;gap:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:5}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:var(--muted);margin:8px 0 18px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.legend .d::before{background:var(--door)} .legend .w::before{background:var(--window)} .legend .p::before{background:var(--wall)}
+.grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(300px,2fr);gap:20px}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr.hl td{background:var(--ok-bg)}
+.scroll{overflow-x:auto}
+input[type=number],input[type=text],select,textarea{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:5px 7px}
+input[type=number]{width:5.5em;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+input[type=text]{width:100%;min-width:9em}
+textarea{width:100%;min-height:64px;resize:vertical}
+:is(input,select,textarea,button):focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.pill{display:inline-block;font-size:.72rem;font-weight:600;letter-spacing:.04em;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.door{color:var(--door);border-color:currentColor} .pill.window{color:var(--window);border-color:currentColor}
+.pill.sch{color:var(--accent);border-color:currentColor}
+.src{font-size:.75rem;color:var(--muted)}
+.btn{font:inherit;font-weight:500;background:var(--accent);color:var(--accent-ink);border:0;border-radius:4px;padding:6px 12px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.sm{padding:3px 8px;font-size:.82rem}
+.marks{margin-top:14px}
+.marks table td:first-child{width:2.2em}
+.empty{color:var(--muted);font-size:.9rem}
+.row-actions{display:flex;gap:6px;flex-wrap:wrap}
+label.chk{display:inline-flex;gap:6px;align-items:center;font-size:.85rem;white-space:nowrap}
+.foot{color:var(--muted);font-size:.85rem;max-width:68ch}
+@media (prefers-reduced-motion:no-preference){.mk{transition:transform .12s}.mk:hover{transform:translate(-50%,-50%) scale(1.15)}}
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>Revisão de esquadrias</h1>
+      <p class="lead">Para cada planta: confira a largura por código, marque as aberturas mal posicionadas e clique no desenho para apontar o que faltou. Tudo é salvo automaticamente.</p>
+    </div>
+    <div class="status" id="status">Carregando…</div>
+  </div>
+  <div id="plants"></div>
+  <p class="foot">Larguras em metros, como no quadro de esquadrias. Verde = porta, azul = janela, vermelho = parede extraída. Marcador tracejado = posição inferida só pela etiqueta.</p>
+</div>
+
+<script>
+const DATA = __DATA__;
+const $ = (s, el=document) => el.querySelector(s);
+const state = {};      // id -> answers doc
+const dirty = new Set();
+let db = null, saveTimer = null;
+
+function defaultDoc(pl){
+  const codes = {};
+  for (const [c, v] of Object.entries(pl.codes)) codes[c] = { width: v.schedule ?? v.geom, type: v.type };
+  const openings = {};
+  for (const o of pl.openings) openings[o.id] = { status: "ok", note: "" };
+  return { file: pl.file, codes, openings, marks: [], notes: "", updated_at: null };
+}
+
+function setStatus(text, cls){ const s = $("#status"); s.textContent = text; s.className = "status " + (cls||""); }
+
+function scheduleSave(id){
+  dirty.add(id);
+  setStatus("Alterações não salvas…", "saving");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flush, 900);
+}
+async function flush(){
+  if (!db){ setStatus("Sem conexão com o armazenamento: as respostas ficam só nesta tela.", "err"); return; }
+  const ids = [...dirty]; dirty.clear();
+  try{
+    for (const id of ids){
+      state[id].updated_at = new Date().toISOString();
+      await db.doc("respostas/" + id).set(state[id]);
+    }
+    const t = new Date(); setStatus("Salvo às " + t.toLocaleTimeString("pt-BR", {hour:"2-digit", minute:"2-digit"}));
+  }catch(e){ ids.forEach(i => dirty.add(i)); setStatus("Não foi possível salvar (" + (e && e.code || "erro") + "). Vou tentar de novo.", "err"); saveTimer = setTimeout(flush, 4000); }
+}
+
+function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const TYPE_PT = { door: "Porta", window: "Janela", wall: "Parede" };
+
+function render(){
+  const root = $("#plants"); root.innerHTML = "";
+  for (const pl of DATA){
+    const st = state[pl.id];
+    const sec = document.createElement("section"); sec.className = "plant"; sec.id = "pl-" + pl.id;
+    const qs = pl.questions.length
+      ? `<div class="qs"><strong>O que eu não consegui confirmar sozinho</strong><ul>${pl.questions.map(q => `<li>${esc(q)}</li>`).join("")}</ul></div>`
+      : `<div class="ok-note">Larguras lidas do quadro de esquadrias do próprio PDF. Só confira as posições.</div>`;
+    sec.innerHTML = `
+      <div class="plant-head"><h2>${esc(pl.title)}</h2>
+        <span class="meta mono">${pl.walls} paredes · ${pl.openings.length} aberturas · escala pelas cotas</span></div>
+      ${qs}
+      <div class="figure" id="fig-${pl.id}"><img src="${pl.image}" alt="Planta baixa ${esc(pl.title)} com paredes e aberturas extraídas" draggable="false"></div>
+      <div class="legend"><span class="d">porta</span><span class="w">janela</span><span class="p">parede</span><span>clique no desenho para marcar algo que faltou</span></div>
+      <div class="grid">
+        <div class="card"><h3>Largura por código</h3><div class="scroll"><table id="codes-${pl.id}"></table></div></div>
+        <div class="card"><h3>Aberturas encontradas</h3><div class="scroll"><table id="ops-${pl.id}"></table></div>
+          <div class="marks"><h3>Marcado no desenho</h3><div id="marks-${pl.id}"></div></div>
+          <h3 style="margin-top:14px">Observações</h3>
+          <textarea id="notes-${pl.id}" placeholder="Qualquer coisa que eu deva saber sobre esta planta">${esc(st.notes)}</textarea>
+        </div>
+      </div>`;
+    root.appendChild(sec);
+    renderCodes(pl); renderOps(pl); renderMarks(pl); renderMarkers(pl);
+    $("#notes-" + pl.id).addEventListener("input", e => { st.notes = e.target.value; scheduleSave(pl.id); });
+    $("#fig-" + pl.id).addEventListener("click", e => onFigureClick(pl, e));
+  }
+}
+
+function renderCodes(pl){
+  const st = state[pl.id]; const t = $("#codes-" + pl.id);
+  t.innerHTML = `<thead><tr><th>Código</th><th>Tipo</th><th>Largura (m)</th><th>Origem</th></tr></thead><tbody>` +
+    Object.entries(pl.codes).map(([c, v]) => {
+      const cur = st.codes[c]?.width ?? v.geom;
+      const src = v.schedule != null ? `<span class="pill sch">quadro</span>` : `<span class="src">geometria ${v.geom.toFixed(2)}</span>`;
+      return `<tr><td class="mono">${esc(c)}</td><td><span class="pill ${v.type}">${TYPE_PT[v.type]}</span></td>
+        <td><input type="number" step="0.05" min="0.2" max="6" id="cw-${pl.id}-${c}" value="${Number(cur).toFixed(2)}" aria-label="Largura de ${esc(c)}"></td><td>${src}</td></tr>`;
+    }).join("") + `</tbody>`;
+  for (const c of Object.keys(pl.codes)){
+    $(`#cw-${pl.id}-${c}`).addEventListener("change", e => {
+      const v = parseFloat(e.target.value); if (!isFinite(v)) return;
+      st.codes[c] = { ...(st.codes[c]||{}), width: v, type: pl.codes[c].type }; scheduleSave(pl.id);
+    });
+  }
+}
+
+function renderOps(pl){
+  const st = state[pl.id]; const t = $("#ops-" + pl.id);
+  t.innerHTML = `<thead><tr><th>#</th><th>Código</th><th>Tipo</th><th>Largura</th><th>Posição</th><th>Obs.</th></tr></thead><tbody>` +
+    pl.openings.map((o, i) => {
+      const a = st.openings[o.id] || { status: "ok", note: "" };
+      const w = st.codes[o.code]?.width ?? o.width_m;
+      return `<tr id="row-${pl.id}-${o.id}"><td class="mono">${i+1}</td><td class="mono">${esc(o.code || "—")}</td>
+        <td><select id="ty-${pl.id}-${o.id}" aria-label="Tipo da abertura ${i+1}">
+          <option value="door" ${(a.type||o.type)==="door"?"selected":""}>Porta</option>
+          <option value="window" ${(a.type||o.type)==="window"?"selected":""}>Janela</option></select></td>
+        <td class="mono">${Number(w).toFixed(2)}${o.confidence < 1 ? ' <span class="pill">só etiqueta</span>' : ""}</td>
+        <td><select id="stt-${pl.id}-${o.id}" aria-label="Posição da abertura ${i+1}">
+          <option value="ok" ${a.status==="ok"?"selected":""}>Certa</option>
+          <option value="pos_errada" ${a.status==="pos_errada"?"selected":""}>Lugar errado</option>
+          <option value="nao_existe" ${a.status==="nao_existe"?"selected":""}>Não existe</option></select></td>
+        <td><input type="text" id="nt-${pl.id}-${o.id}" value="${esc(a.note)}" placeholder="opcional" aria-label="Observação da abertura ${i+1}"></td></tr>`;
+    }).join("") + `</tbody>`;
+  for (const o of pl.openings){
+    const a = st.openings[o.id] = st.openings[o.id] || { status: "ok", note: "" };
+    $(`#ty-${pl.id}-${o.id}`).addEventListener("change", e => { a.type = e.target.value; scheduleSave(pl.id); renderMarkers(pl); });
+    $(`#stt-${pl.id}-${o.id}`).addEventListener("change", e => { a.status = e.target.value; scheduleSave(pl.id); renderMarkers(pl); });
+    $(`#nt-${pl.id}-${o.id}`).addEventListener("input", e => { a.note = e.target.value; scheduleSave(pl.id); });
+  }
+}
+
+function renderMarkers(pl){
+  const fig = $("#fig-" + pl.id); const st = state[pl.id];
+  fig.querySelectorAll(".mk, .pop").forEach(n => n.remove());
+  pl.openings.forEach((o, i) => {
+    const a = st.openings[o.id] || {}; if (a.status === "nao_existe") return;
+    const m = document.createElement("div");
+    m.className = "mk " + (a.type || o.type) + (o.confidence < 1 ? " low" : "");
+    m.style.left = o.x + "%"; m.style.top = o.y + "%"; m.textContent = i + 1; m.title = `${o.code || ""} ${TYPE_PT[a.type || o.type]}`;
+    m.addEventListener("click", e => { e.stopPropagation(); const r = $(`#row-${pl.id}-${o.id}`); r.scrollIntoView({block:"center", behavior:"smooth"}); r.classList.add("hl"); setTimeout(() => r.classList.remove("hl"), 1600); });
+    fig.appendChild(m);
+  });
+  st.marks.forEach((k, i) => {
+    const m = document.createElement("div"); m.className = "mk new " + k.kind; m.style.left = k.x + "%"; m.style.top = k.y + "%"; m.textContent = "+" + (i + 1); m.title = TYPE_PT[k.kind] + " marcada por você";
+    m.addEventListener("click", e => { e.stopPropagation(); $("#marks-" + pl.id).scrollIntoView({block:"center", behavior:"smooth"}); });
+    fig.appendChild(m);
+  });
+}
+
+function onFigureClick(pl, e){
+  const fig = $("#fig-" + pl.id); const img = fig.querySelector("img"); const r = img.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * 100, y = (e.clientY - r.top) / r.height * 100;
+  if (x < 0 || y < 0 || x > 100 || y > 100) return;
+  fig.querySelectorAll(".pop").forEach(n => n.remove());
+  const pop = document.createElement("div"); pop.className = "pop"; pop.style.left = x + "%"; pop.style.top = y + "%";
+  pop.innerHTML = `<button class="btn sm" data-k="door">Porta</button><button class="btn sm" data-k="window">Janela</button><button class="btn sm" data-k="wall">Parede</button><button class="btn sm ghost" data-k="x">Cancelar</button>`;
+  pop.addEventListener("click", ev => {
+    ev.stopPropagation(); const k = ev.target.dataset.k; if (!k) return;
+    pop.remove(); if (k === "x") return;
+    state[pl.id].marks.push({ x: +x.toFixed(2), y: +y.toFixed(2), kind: k, note: "" });
+    scheduleSave(pl.id); renderMarks(pl); renderMarkers(pl);
+  });
+  fig.appendChild(pop);
+}
+
+function renderMarks(pl){
+  const st = state[pl.id]; const box = $("#marks-" + pl.id);
+  if (!st.marks.length){ box.innerHTML = `<p class="empty">Nada marcado. Clique no desenho onde falta uma porta, janela ou parede.</p>`; return; }
+  box.innerHTML = `<table><tbody>` + st.marks.map((k, i) => `<tr><td class="mono">+${i+1}</td>
+    <td><span class="pill ${k.kind}">${TYPE_PT[k.kind]}</span></td>
+    <td><input type="text" id="mk-${pl.id}-${i}" value="${esc(k.note)}" placeholder="ex.: porta de 0,80 aqui" aria-label="Nota da marcação ${i+1}"></td>
+    <td><button class="btn sm ghost" id="mkdel-${pl.id}-${i}">Remover</button></td></tr>`).join("") + `</tbody></table>`;
+  st.marks.forEach((k, i) => {
+    $(`#mk-${pl.id}-${i}`).addEventListener("input", e => { k.note = e.target.value; scheduleSave(pl.id); });
+    $(`#mkdel-${pl.id}-${i}`).addEventListener("click", () => { st.marks.splice(i, 1); scheduleSave(pl.id); renderMarks(pl); renderMarkers(pl); });
+  });
+}
+
+// boot: render immediately from defaults, then overlay saved answers when the store answers
+for (const pl of DATA) state[pl.id] = defaultDoc(pl);
+render();
+(async () => {
+  db = await window.claude?.use?.("db");
+  if (!db){ setStatus("Armazenamento indisponível nesta visualização: as respostas ficam só nesta tela.", "err"); return; }
+  try{
+    for (const pl of DATA){
+      const snap = await db.doc("respostas/" + pl.id).get();
+      if (snap.exists){ const d = snap.data(); state[pl.id] = { ...defaultDoc(pl), ...d, codes: { ...state[pl.id].codes, ...(d.codes||{}) }, openings: { ...state[pl.id].openings, ...(d.openings||{}) }, marks: d.marks || [] }; }
+    }
+    render(); setStatus("Pronto. As respostas são salvas sozinhas.");
+  }catch(e){ setStatus("Não consegui ler respostas anteriores (" + (e && e.code || "erro") + ").", "err"); }
+})();
+</script>
