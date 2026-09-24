@@ -30,13 +30,23 @@ def to_tensor(img: np.ndarray) -> torch.Tensor:
 
 
 class PlanSegDataset(Dataset):
-    def __init__(self, folder: str, size: int = 512, augment: bool = False, crop_prob: float = 0.5):
+    """Image/mask pairs with optional geometric augmentation and wall restyling.
+
+    ``restyle_prob`` redraws the walls in a random drafting style (see
+    ``wallextractor.styles``) for that fraction of samples. ``fixed_style``
+    applies one style to every sample deterministically (for evaluation).
+    """
+
+    def __init__(self, folder: str, size: int = 512, augment: bool = False, crop_prob: float = 0.5,
+                 restyle_prob: float = 0.0, fixed_style: str | None = None):
         self.samples = list_samples(folder)
         if not self.samples:
             raise FileNotFoundError(f"no image/mask pairs in {folder}")
         self.size = size
         self.augment = augment
         self.crop_prob = crop_prob
+        self.restyle_prob = restyle_prob
+        self.fixed_style = fixed_style
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -45,6 +55,13 @@ class PlanSegDataset(Dataset):
         img_path, mask_path = self.samples[idx]
         img = Image.open(img_path).convert("RGB")
         mask = Image.open(mask_path)
+        if self.fixed_style or (self.restyle_prob > 0 and random.random() < self.restyle_prob):
+            from .styles import random_style, restyle_walls
+
+            rng = random.Random(idx) if self.fixed_style else random
+            style = self.fixed_style or random_style(rng, exclude_solid=True)
+            arr = restyle_walls(np.asarray(img, dtype=np.uint8), np.asarray(mask, dtype=np.uint8), style, rng=rng)
+            img = Image.fromarray(arr)
         if self.augment and random.random() < self.crop_prob:
             # zoomed-in crop: keeps walls thick enough to learn thickness at 512 px
             w, h = img.size

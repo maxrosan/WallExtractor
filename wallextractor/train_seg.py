@@ -64,7 +64,8 @@ def train(args) -> Dict[str, float]:
     os.makedirs(args.out, exist_ok=True)
     log_path = os.path.join(args.out, "metrics.jsonl")
 
-    train_ds = PlanSegDataset(os.path.join(args.data, "train"), size=args.size, augment=True)
+    train_ds = PlanSegDataset(os.path.join(args.data, "train"), size=args.size, augment=True,
+                              restyle_prob=args.restyle_prob)
     val_ds = PlanSegDataset(os.path.join(args.data, "val"), size=args.size, augment=False)
     if args.limit_train:
         train_ds.samples = train_ds.samples[: args.limit_train]
@@ -74,6 +75,13 @@ def train(args) -> Dict[str, float]:
     train_dl = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=workers, pin_memory=True,
                           drop_last=len(train_ds) >= args.batch)
     val_dl = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=workers, pin_memory=True)
+    # Second validation view: same plans with walls redrawn in a fixed style (domain-shift probe).
+    restyled_dls = {}
+    for style in [s for s in args.eval_styles.split(",") if s]:
+        ds = PlanSegDataset(os.path.join(args.data, "val"), size=args.size, augment=False, fixed_style=style)
+        ds.samples = val_ds.samples
+        restyled_dls[style] = DataLoader(ds, batch_size=args.batch, shuffle=False, num_workers=workers,
+                                         pin_memory=True)
 
     num_classes = len(CLASSES)
     model = build_model(args.model, num_classes).to(device)
@@ -117,6 +125,9 @@ def train(args) -> Dict[str, float]:
             if args.max_minutes and (time.time() - t0) / 60 > args.max_minutes:
                 break
         metrics = evaluate(model, val_dl, device, num_classes)
+        for style, dl in restyled_dls.items():
+            m = evaluate(model, dl, device, num_classes)
+            metrics.update({f"{k}@{style}": v for k, v in m.items() if k in ("iou_wall", "iou_door", "iou_window")})
         metrics.update({"epoch": epoch, "train_loss": running / max(n, 1), "elapsed_s": round(time.time() - t0)})
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
@@ -181,6 +192,9 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--max-minutes", type=float, default=0, help="stop after this wall-clock budget")
     ap.add_argument("--limit-train", type=int, default=0)
     ap.add_argument("--limit-val", type=int, default=0)
+    ap.add_argument("--restyle-prob", type=float, default=0.0,
+                    help="fraction of training samples whose walls are redrawn in a random style")
+    ap.add_argument("--eval-styles", default="", help="comma list of styles for extra validation views, e.g. hatch45,outline")
     ap.add_argument("--export-onnx", action="store_true")
     args = ap.parse_args(argv)
     train(args)
