@@ -134,6 +134,81 @@ Nota sobre o RunPod: a conta está acessível, sem pods, com cerca de US$ 6 de
 saldo. O bake-off inteiro custa perto de 25 horas de A100, ou seja, algo
 entre US$ 40 e US$ 60 nos preços atuais. Será preciso adicionar crédito.
 
+## Restrição de produção: easypanel-max com 6 a 8 GB de RAM e sem GPU
+
+Adicionado em 2026-09-24 depois da definição do ambiente de produção.
+O treino pode ir para o RunPod; a inferência precisa rodar no easypanel-max,
+que tem entre 6 e 8 GB de RAM, sem GPU, compartilhados com o sistema, o
+Docker do EasyPanel e os outros serviços (EVOAPI etc.). Orçamento realista
+para o extrator: **3 a 4 GB de RAM em pico e poucos vCPUs.**
+
+### O que cabe e o que não cabe
+
+| Componente | Pico de RAM em CPU | Tempo por planta (estimativa, 4 vCPUs) | Veredito |
+|---|---|---|---|
+| PyMuPDF (extração de paths do PDF vetorial) + regras | < 300 MB | < 1 s | Cabe com folga |
+| SegFormer-B2 / U-Net para máscara de parede (MitUNet, ~25M parâmetros), ONNX int8 | < 1 GB | 2 a 10 s em 1024 px | Cabe com folga |
+| Detecção do fpvec-lab (ResNet + deformable attention, ~50M parâmetros) | ~1 GB | 2 a 5 s | Cabe; precisa retreinar em 512 px, os 256 px originais são pouco para planta grande |
+| Florence-2-base (0,23B) / large (0,77B) | 1 a 3 GB | 5 a 30 s | Cabe; entrada fixa em 768 px, exige tiling |
+| Qwen3-VL-2B em GGUF Q4 + projetor de visão (llama.cpp) | 3,5 a 4 GB | 3 a 6 min (prefill de ~3k tokens visuais + geração de ~2k tokens de JSON) | Cabe no limite; lento; a quantização em 4 bits degrada justamente as coordenadas |
+| Qwen3.5-0.8B | ~2 GB | 1 a 3 min | Cabe, mas não há evidência de que 0,8B acerte geometria |
+| Qwen3-VL-4B Q4 | 5 a 6 GB | 6 a 12 min | Não cabe com os outros serviços |
+| Qwen3-VL-8B / GLM-4.6V-Flash 9B | > 6 GB mesmo em Q4 | dezenas de minutos | Não cabe |
+
+A conclusão é que **o VLM não pode ser o núcleo do sistema no easypanel-max**.
+Isso reforça a recomendação híbrida da seção anterior: a geometria fica com
+componentes pequenos e determinísticos, que são justamente os que se saíram
+melhor no artigo de He Zhang.
+
+### Arquitetura recomendada para essa restrição
+
+```
+PDF ──► PyMuPDF ──► tem paths vetoriais?
+                      │
+        sim ──────────┴────────── não (raster / escaneado)
+         │                              │
+  classificador de linhas         renderiza 1024 px
+  (regras + modelo leve,          ──► SegFormer/U-Net int8 (máscara de parede)
+   estilo VecFormer)              ──► esqueletização + vetorização (RDP)
+         │                              │
+         └──────────┬───────────────────┘
+                    ▼
+        JSON de paredes com coordenadas exatas
+                    │
+                    ▼  (opcional, só quando precisar de semântica:
+                        escala pelas cotas, nome de cômodo, tipo de abertura)
+        VLM fora do servidor: RunPod Serverless com Qwen3-VL-8B + LoRA
+        (escala a zero; paga só os segundos de uso)
+```
+
+Custo do VLM remoto: um worker serverless com L4 ou A10 custa na faixa de
+US$ 0,0003 a 0,0005 por segundo. Uma planta leva de 10 a 30 s, ou seja,
+**menos de US$ 0,02 por planta**. O saldo atual de US$ 6 cobre centenas de
+plantas. Se o volume crescer, o mesmo endpoint escala sem mexer no
+easypanel-max.
+
+### O que treinar no RunPod
+
+| Treino | Hardware | Tempo | Sai para o easypanel-max? |
+|---|---|---|---|
+| SegFormer-B2 em CubiCasa5K + ResPlan renderizado + dados próprios | 1 A100 40/80 GB | 3 a 6 h | Sim, exportado em ONNX int8 (~30 MB) |
+| Detecção do fpvec-lab em 512 px | 1 A100 | 4 a 8 h | Sim, ONNX |
+| Classificador de primitivas vetoriais em FloorPlanCAD | 1 A100 ou até CPU | 1 a 3 h | Sim, é um modelo pequeno |
+| LoRA em Qwen3-VL-8B para semântica e JSON | 1 A100 80 GB | ~8 h | Não; fica no RunPod Serverless, mesclado e quantizado em AWQ |
+| LoRA em Qwen3-VL-2B (só se quiser VLM local) | 1 A100 | ~4 h | GGUF Q4 via llama.cpp, aceitando 3 a 6 min por planta |
+
+### Decisão
+
+1. Núcleo no easypanel-max: PyMuPDF + SegFormer int8 + vetorização. Sem VLM
+   local na primeira versão.
+2. VLM (Qwen3-VL-8B com LoRA) no RunPod Serverless, chamado por HTTP só
+   para semântica. Se o custo por planta ficar acima do aceitável, a
+   alternativa local é Qwen3-VL-2B Q4, com a lentidão e a perda de precisão
+   descritas acima.
+3. O bake-off da seção anterior continua válido, mas o critério muda: o
+   modelo de detecção precisa ser bom o bastante sozinho, porque é ele que
+   roda no servidor. O VLM só é comparado no papel de módulo de semântica.
+
 ## Fontes
 
 - FloorplanVLM: https://arxiv.org/abs/2602.06507
