@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WallExtractor · Editor</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <aside id="left">
+    <div class="brand">WallExtractor <span>editor</span></div>
+    <div class="filters">
+      <button data-f="pending" class="on">Pendentes</button>
+      <button data-f="corrected">Corrigidas</button>
+      <button data-f="">Todas</button>
+    </div>
+    <ul id="queue" class="queue"></ul>
+    <label class="upload">
+      <input type="file" id="upload" accept="application/pdf" multiple hidden>
+      <span>+ Enviar PDFs para a fila</span>
+    </label>
+    <div id="upload-status" class="muted small"></div>
+  </aside>
+
+  <main id="center">
+    <div id="toolbar">
+      <button data-tool="select" class="tool on" title="Selecionar / mover (V)">Selecionar <kbd>V</kbd></button>
+      <button data-tool="wall" class="tool" title="Desenhar parede: dois cliques (W)">Parede <kbd>W</kbd></button>
+      <button data-tool="door" class="tool" title="Porta: arraste sobre uma parede (D)">Porta <kbd>D</kbd></button>
+      <button data-tool="window" class="tool" title="Janela: arraste sobre uma parede (J)">Janela <kbd>J</kbd></button>
+      <button data-tool="calib" class="tool" title="Calibrar escala: dois cliques e a distância (C)">Escala <kbd>C</kbd></button>
+      <span class="sep"></span>
+      <button id="undo" title="Desfazer (Ctrl+Z)">↶</button>
+      <button id="redo" title="Refazer (Ctrl+Y)">↷</button>
+      <span class="sep"></span>
+      <label class="chk"><input type="checkbox" id="show-prims"> linhas do PDF</label>
+      <label class="chk"><input type="checkbox" id="snap" checked> encaixe</label>
+      <span class="grow"></span>
+      <span id="measure" class="mono"></span>
+      <span id="zoom" class="mono muted">100%</span>
+    </div>
+    <div id="stage-wrap"><div id="stage"></div>
+      <div id="hint" class="hint">Escolha uma planta na fila.</div>
+    </div>
+  </main>
+
+  <aside id="right">
+    <div id="plan-head">
+      <input id="title" type="text" placeholder="Título">
+      <div class="muted small" id="plan-meta"></div>
+    </div>
+    <div class="status-line"><span id="save-status" class="muted small">—</span></div>
+    <div class="actions">
+      <button id="mark-corrected" class="primary">Marcar corrigida e ir para a próxima</button>
+      <button id="mark-skip">Pular</button>
+    </div>
+
+    <section id="sel-panel" class="panel">
+      <h3>Seleção</h3>
+      <div id="sel-none" class="muted small">Clique numa parede ou abertura. Arraste as pontas para redimensionar.</div>
+      <div id="sel-wall" hidden>
+        <div class="row"><label>Espessura</label><input type="number" id="w-thick" step="1" min="3" max="80"> <span class="unit">cm</span></div>
+        <div class="row"><label>Comprimento</label><span id="w-len" class="mono"></span></div>
+        <div class="row"><label>Tipo</label><select id="w-kind"><option value="">—</option><option value="external">externa</option><option value="internal">interna</option></select></div>
+        <div class="row"><button id="w-split">Dividir no meio</button><button id="w-del" class="danger">Excluir</button></div>
+      </div>
+      <div id="sel-open" hidden>
+        <div class="row"><label>Tipo</label><select id="o-type"><option value="door">Porta</option><option value="window">Janela</option></select></div>
+        <div class="row"><label>Código</label><input type="text" id="o-code" list="codes-list" placeholder="P1, J2…"><datalist id="codes-list"></datalist></div>
+        <div class="row"><label>Largura</label><input type="number" id="o-width" step="0.01" min="0.2" max="8"> <span class="unit">m</span></div>
+        <div class="row"><label>Confiança</label><span id="o-conf" class="mono"></span></div>
+        <div class="row"><button id="o-del" class="danger">Excluir</button></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>Quadro de esquadrias</h3>
+      <table id="codes"></table>
+      <div class="muted small">A largura do código vale para todas as aberturas com esse código ao clicar em aplicar.</div>
+    </section>
+
+    <section class="panel">
+      <h3>Aberturas <span id="open-count" class="muted"></span></h3>
+      <div class="scroll"><table id="openings"></table></div>
+    </section>
+
+    <section class="panel">
+      <h3>Escala</h3>
+      <div class="row"><span id="scale-info" class="mono small"></span></div>
+      <div id="calib-box" hidden>
+        <div class="row"><label>Distância real</label><input type="number" id="calib-dist" step="0.01" min="0.05"> <span class="unit">m</span> <button id="calib-ok">Aplicar</button></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>Notas do extrator</h3>
+      <ul id="questions" class="small"></ul>
+    </section>
+  </aside>
+</div>
+
+<div id="token-modal" class="modal" hidden>
+  <div class="modal-box">
+    <h3>Acesso</h3>
+    <p class="small muted">Informe o token configurado no servidor (EDITOR_TOKEN).</p>
+    <input type="password" id="token-input" placeholder="token">
+    <button id="token-ok" class="primary">Entrar</button>
+  </div>
+</div>
+
+<script src="vendor/konva.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

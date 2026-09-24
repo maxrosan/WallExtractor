@@ -34,11 +34,20 @@ cd /workspace/we
 pip install -q -r requirements-train.txt 2>&1 | tail -3
 python -c "import torch, transformers; print('[job] torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'transformers', transformers.__version__)"
 
+# Corrected plans from the editor (WE_EDITOR_URL + EDITOR_TOKEN) join the training set.
+EXTRA=""
+if [ -n "$WE_EDITOR_URL" ]; then
+  python scripts/fetch_corrections.py --editor "$WE_EDITOR_URL" --token "$EDITOR_TOKEN" \
+      --out /workspace/data/corrections --prepared /workspace/data/prepared_corr \
+    && EXTRA="--extra-train /workspace/data/prepared_corr/train --extra-val /workspace/data/prepared_corr/val" \
+    || echo "[job] no corrections fetched"
+fi
+
 python scripts/fetch_cubicasa_subset.py --out /workspace/data/cubicasa5k --train "${WE_TRAIN:-400}" --val "${WE_VAL:-100}" \
   && python -m wallextractor.cubicasa --root /workspace/data/cubicasa5k --out /workspace/data/prepared \
   && python -m wallextractor.train_seg --data /workspace/data/prepared --out /workspace/results \
        --epochs "${WE_EPOCHS:-15}" --size "${WE_SIZE:-512}" --batch "${WE_BATCH:-8}" --model "${WE_MODEL:-nvidia/mit-b1}" \
-       --max-minutes "${WE_MAX_MINUTES:-45}" --export-onnx
+       --max-minutes "${WE_MAX_MINUTES:-45}" --restyle-prob "${WE_RESTYLE:-0.5}" $EXTRA --export-onnx
 echo "[job] JOB_DONE rc=$? $(date -u +%FT%TZ)"
 
 # Command loop: the controller uploads /workspace/cmd.sh; output goes to /workspace/cmd.log.

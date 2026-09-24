@@ -58,6 +58,21 @@ python scripts/runpod_ctl.py terminate
 O pod se encerra sozinho depois de ficar ocioso (`--idle-minutes`) e tem um
 limite duro de tempo (`--hard-minutes`) para proteger o saldo.
 
+## Editor de anotações (EasyPanel)
+
+`editor/` é uma aplicação web para corrigir a saída planta por planta:
+fila de correção, arrastar e redimensionar paredes e aberturas, desenhar
+retas na escala com a medida em metros, encaixe nas linhas do PDF, quadro de
+esquadrias, e exportação das correções como pares de treino. Deploy com o
+`Dockerfile` da raiz e um volume em `/data`. Detalhes em `docs/editor.md`.
+
+```
+pip install -r requirements-editor.txt
+EDITOR_DATA=./data/editor EDITOR_TOKEN=segredo uvicorn editor.app:app --port 8000
+python scripts/enqueue.py --editor http://localhost:8000 --token segredo plantas/*.pdf
+python scripts/fetch_corrections.py --editor http://localhost:8000 --token segredo --out data/corrections --prepared data/prepared_corr
+```
+
 ## Formato de saída
 
 ```json

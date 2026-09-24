@@ -71,6 +71,18 @@ def train(args) -> Dict[str, float]:
         train_ds.samples = train_ds.samples[: args.limit_train]
     if args.limit_val:
         val_ds.samples = val_ds.samples[: args.limit_val]
+    # Corrected plans from the editor (wallextractor.annotations layout); repeated so a handful of
+    # real Brazilian sheets weighs against thousands of CubiCasa plans.
+    for extra in args.extra_train or []:
+        if os.path.isdir(extra):
+            ds = PlanSegDataset(extra, size=args.size, augment=True, restyle_prob=args.restyle_prob)
+            train_ds.samples += ds.samples * max(1, args.extra_repeat)
+            print(f"[train] extra train: {len(ds.samples)} plans x{max(1, args.extra_repeat)} from {extra}", flush=True)
+    for extra in args.extra_val or []:
+        if os.path.isdir(extra):
+            ds = PlanSegDataset(extra, size=args.size, augment=False)
+            val_ds.samples += ds.samples
+            print(f"[train] extra val: {len(ds.samples)} plans from {extra}", flush=True)
     workers = min(args.workers, os.cpu_count() or 1)
     train_dl = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=workers, pin_memory=True,
                           drop_last=len(train_ds) >= args.batch)
@@ -192,6 +204,9 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--max-minutes", type=float, default=0, help="stop after this wall-clock budget")
     ap.add_argument("--limit-train", type=int, default=0)
     ap.add_argument("--limit-val", type=int, default=0)
+    ap.add_argument("--extra-train", action="append", help="prepared folder of corrected plans (repeatable)")
+    ap.add_argument("--extra-val", action="append", help="prepared folder of corrected plans for validation")
+    ap.add_argument("--extra-repeat", type=int, default=20, help="oversampling factor for --extra-train plans")
     ap.add_argument("--restyle-prob", type=float, default=0.0,
                     help="fraction of training samples whose walls are redrawn in a random style")
     ap.add_argument("--eval-styles", default="", help="comma list of styles for extra validation views, e.g. hatch45,outline")
