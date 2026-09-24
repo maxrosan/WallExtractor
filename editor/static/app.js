@@ -141,7 +141,7 @@ function render() {
     const ln = new Konva.Line({ points: [...w.start, ...w.end], stroke: sel ? COLORS.wallSel : COLORS.wall, strokeWidth: w.thickness, lineCap: "butt",
       hitStrokeWidth: Math.max(w.thickness, 14 / k), draggable: S.tool === "select", id: "w:" + w.id });
     ln.on("mousedown touchstart", e => { if (S.tool === "select") { select("wall", w.id); e.cancelBubble = true; } });
-    ln.on("dragstart", () => { ln._orig = { s: [...w.start], e: [...w.end], ops: S.plan.openings.filter(o => o.wall_id === w.id).map(o => ({ o, s: [...o.start], e: [...o.end] })) }; });
+    ln.on("dragstart", () => { hideHandles(); ln._orig = { s: [...w.start], e: [...w.end], ops: S.plan.openings.filter(o => o.wall_id === w.id).map(o => ({ o, s: [...o.start], e: [...o.end] })) }; });
     ln.on("dragmove", () => { const dx = ln.x(), dy = ln.y(); showMeasure(`Δ ${fmtM(Math.hypot(dx, dy))}`); });
     ln.on("dragend", () => { const dx = ln.x(), dy = ln.y(); ln.position({ x: 0, y: 0 }); pushUndo();
       w.start = [ln._orig.s[0] + dx, ln._orig.s[1] + dy]; w.end = [ln._orig.e[0] + dx, ln._orig.e[1] + dy];
@@ -155,7 +155,7 @@ function render() {
     const ln = new Konva.Line({ points: [...o.start, ...o.end], stroke: COLORS[o.type] || COLORS.door, strokeWidth: th, opacity: sel ? 1 : 0.85,
       hitStrokeWidth: Math.max(th, 14 / k), draggable: S.tool === "select", dash: o.confidence < 1 ? [6 / k, 4 / k] : undefined, id: "o:" + o.id });
     ln.on("mousedown touchstart", e => { if (S.tool === "select") { select("opening", o.id); e.cancelBubble = true; } });
-    ln.on("dragstart", () => { ln._orig = { s: [...o.start], e: [...o.end] }; });
+    ln.on("dragstart", () => { hideHandles(); ln._orig = { s: [...o.start], e: [...o.end] }; });
     ln.on("dragmove", () => { // slide along the wall only
       if (!w) return; const dx = ln.x(), dy = ln.y(); const { ux, uy } = axis(w); const t = dx * ux + dy * uy; ln.position({ x: ux * t, y: uy * t }); showMeasure(`deslocado ${fmtM(Math.abs(t))}`); });
     ln.on("dragend", () => { const dx = ln.x(), dy = ln.y(); ln.position({ x: 0, y: 0 }); pushUndo();
@@ -191,6 +191,7 @@ function renderHandles() {
   }
   uiLayer.draw();
 }
+function hideHandles() { uiLayer.destroyChildren(); uiLayer.batchDraw(); }
 function redrawItem(item) {
   const node = stage.findOne("#" + (S.sel.kind === "wall" ? "w:" : "o:") + item.id); if (node) node.points([...item.start, ...item.end]);
   if (S.sel.kind === "wall") for (const o of S.plan.openings.filter(o => o.wall_id === item.id)) { // keep openings on the moved axis
@@ -203,7 +204,16 @@ function showSnap(sn) { if (snapMark) { snapMark.destroy(); snapMark = null; } i
 function showMeasure(t) { $("#measure").textContent = t || ""; }
 
 // ------------------------------------------------------------------ selection + editing
-function select(kind, id) { S.sel = kind ? { kind, id } : null; render(); }
+// selecting only restyles the existing nodes: rebuilding them on mousedown would destroy the node the
+// user is pressing and Konva would never start dragging it
+function select(kind, id) {
+  const next = kind ? { kind, id } : null;
+  if ((next && S.sel && next.kind === S.sel.kind && next.id === S.sel.id) || (!next && !S.sel)) return;
+  S.sel = next; if (!S.plan) return;
+  for (const w of S.plan.walls) { const n = stage.findOne("#w:" + w.id); if (n) n.stroke(S.sel && S.sel.kind === "wall" && S.sel.id === w.id ? COLORS.wallSel : COLORS.wall); }
+  for (const o of S.plan.openings) { const n = stage.findOne("#o:" + o.id); if (n) n.opacity(S.sel && S.sel.kind === "opening" && S.sel.id === o.id ? 1 : 0.85); }
+  wallLayer.batchDraw(); openLayer.batchDraw(); renderHandles(); renderPanels();
+}
 function pushUndo() { S.undo.push(JSON.stringify(S.plan)); if (S.undo.length > 80) S.undo.shift(); S.redo = []; }
 function undo() { if (!S.undo.length) return; S.redo.push(JSON.stringify(S.plan)); S.plan = JSON.parse(S.undo.pop()); S.sel = null; changed(); }
 function redo() { if (!S.redo.length) return; S.undo.push(JSON.stringify(S.plan)); S.plan = JSON.parse(S.redo.pop()); S.sel = null; changed(); }
