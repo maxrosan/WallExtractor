@@ -151,7 +151,7 @@ def export_onnx(model_dir: str, onnx_path: str, size: int) -> None:
             return self.m(pixel_values=x).logits
 
     dummy = torch.zeros(1, 3, size, size)
-    torch.onnx.export(Wrapper(model), dummy, onnx_path, opset_version=17, input_names=["pixel_values"],
+    torch.onnx.export(Wrapper(model).eval(), dummy, onnx_path, opset_version=17, input_names=["pixel_values"],
                       output_names=["logits"], dynamic_axes={"pixel_values": {0: "b", 2: "h", 3: "w"},
                                                              "logits": {0: "b", 2: "h4", 3: "w4"}})
     # Newer exporters write weights to a side file; fold them into one self-contained .onnx for deployment.
