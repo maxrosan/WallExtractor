@@ -759,9 +759,12 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             width = hi - lo
             if not (w_min <= width <= w_max):
                 continue
+            # the frame must sit on this wall, not on its extension past the end
+            if min(hi, L) - max(lo, 0.0) < 0.7 * width:
+                continue
             consistent = sum(1 for a, b in spans if abs(a - lo) <= 0.12 * width and abs(b - hi) <= 0.12 * width)
             if consistent >= 2:
-                per_wall[wi].append((lo, hi, ["frame"] * consistent))
+                per_wall[wi].append((max(lo, 0.0), min(hi, L), ["frame"] * consistent))
 
     wall_index = {w.id: i for i, w in enumerate(walls)}
     seen_gaps = set()
@@ -782,35 +785,39 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
         gaps_w = [(lo, hi) for lo, hi, cues in items if cues == ["gap"]]
         taken = [False] * len(gaps_w)
         # overlapping primaries (e.g. a leaf and its frame lines) become one opening
-        merged = []
+        merged = []  # (lo, hi, cues, parts)
         for lo, hi, cues in sorted(primary, key=lambda z: z[0]):
-            if merged and lo < merged[-1][1] - 0.05 * ppm:
-                m0, m1, mc = merged[-1]
-                # keep the leaf's own extent when a leaf is involved (door width = leaf length)
+            part = (lo, hi, cues[0])
+            if merged and lo < merged[-1][1] - 0.05 * ppm and not ("leaf" in cues and "leaf" in merged[-1][2]):
+                m0, m1, mc, parts = merged[-1]
+                # a leaf defines the door width: frames/gaps attach to it without widening it
                 if "leaf" in mc and "leaf" not in cues:
-                    merged[-1] = (m0, m1, mc + cues)
+                    merged[-1] = (m0, m1, mc + cues, parts + [part])
                 elif "leaf" in cues and "leaf" not in mc:
-                    merged[-1] = (lo, hi, mc + cues)
+                    merged[-1] = (lo, hi, mc + cues, parts + [part])
                 else:
-                    merged[-1] = (m0, max(m1, hi), mc + cues)
+                    merged[-1] = (m0, max(m1, hi), mc + cues, parts + [part])
             else:
-                merged.append((lo, hi, list(cues)))
-        for lo, hi, cues in merged:
+                # two overlapping leaves (jamb lines, furniture) stay separate and compete for the tag
+                merged.append((lo, hi, list(cues), [part]))
+        for lo, hi, cues, parts in merged:
             for gi, (g0, g1) in enumerate(gaps_w):
                 ov = min(hi, g1) - max(lo, g0)
                 if ov >= 0.5 * min(hi - lo, g1 - g0):
                     cues = cues + ["gap"]
+                    parts = parts + [(g0, g1, "gap")]
                     taken[gi] = True
             if w_min <= hi - lo <= w_max:
-                cands.append((wi, lo, hi, cues))
+                cands.append((wi, lo, hi, cues, parts))
         for gi, (g0, g1) in enumerate(gaps_w):
             if not taken[gi]:
-                cands.append((wi, g0, g1, ["gap"]))
+                cands.append((wi, g0, g1, ["gap"], [(g0, g1, "gap")]))
     cands = [{"wall": wi, "start": (walls[wi].start[0] + _wall_frame(walls[wi])[1][0] * lo,
                                     walls[wi].start[1] + _wall_frame(walls[wi])[1][1] * lo),
               "end": (walls[wi].start[0] + _wall_frame(walls[wi])[1][0] * hi,
                       walls[wi].start[1] + _wall_frame(walls[wi])[1][1] * hi),
-              "width": hi - lo, "cues": Counter(cues), "tag": None} for wi, lo, hi, cues in cands]
+              "width": hi - lo, "cues": Counter(cues), "tag": None, "parts": parts}
+             for wi, lo, hi, cues, parts in cands]
 
     # Tag -> candidate assignment. Cost = distance plus penalties when the candidate's cues do not
     # fit the tag type (a "P" tag wants a door leaf, a "J" tag wants frame lines or a wall gap).
@@ -825,19 +832,31 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             cost = d
             if ttype == "door":
                 cost += 0 if cues["leaf"] else 0.6 * ppm
-                cost += 0.4 * ppm if cues["leaf"] >= 3 else 0  # merged clutter (furniture) is unlikely a door
-                cost += 0.3 * ppm if not (0.55 * ppm <= c["width"] <= 1.3 * ppm) else 0
+                cost += 0 if cues["swing"] else 0.3 * ppm  # a leaf with its swing arc beats a bare rectangle
+                cost += 0.3 * ppm if not (0.55 * ppm <= c["width"] <= 1.05 * ppm) else 0  # usual leaf widths
             else:
                 cost += 0 if (cues["frame"] or cues["gap"]) else 0.6 * ppm
+                cost += 0 if cues["frame"] else 0.3 * ppm  # frame lines beat a bare gap (gaps include sills/jambs)
                 cost += 0.4 * ppm if cues["leaf"] else 0
+                if c["width"] > 2.5 * ppm:
+                    continue  # a 2.5 m+ interruption is a passage or a garage front, not a window
+                cost += 0.5 * ppm if c["width"] > 2.0 * ppm else 0
             pairs.append((cost, k, ci, ttype))
     used_t, used_c = set(), set()
+    taken_centres: List[Point] = []
     for cost, k, ci, ttype in sorted(pairs):
         if k in used_t or ci in used_c:
             continue
+        c = cands[ci]
+        cx, cy = (c["start"][0] + c["end"][0]) / 2, (c["start"][1] + c["end"][1]) / 2
+        # overlapping candidates (leaf + jamb lines, two walls at a corner) are one opening: one tag each
+        if any(math.hypot(cx - tx, cy - ty) <= 0.3 * ppm for tx, ty in taken_centres):
+            used_c.add(ci)
+            continue
         used_t.add(k)
         used_c.add(ci)
-        cands[ci]["tag"] = ttype
+        taken_centres.append((cx, cy))
+        c["tag"] = ttype
     tagged_drawing = len(tags) >= 3
 
     region.candidates = cands  # type: ignore[attr-defined]  (inspection / annotation aid)
@@ -857,13 +876,14 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             continue
         o, wi, t = best
         (ax, ay), (ux, uy), _n, L = _wall_frame(walls[wi])
-        if L <= 2.0 * ppm:
-            lo, hi = 0.0, L
+        if 0.4 * ppm <= L <= 1.2 * ppm:
+            lo, hi = 0.0, L  # the short "wall" piece is the frame itself
         else:
             half_w = (0.8 if ttype == "door" else 0.6) * ppm / 2
-            lo, hi = max(0.0, t - half_w), min(L, t + half_w)
+            t = min(max(t, 0.0), L)
+            lo, hi = t - half_w, t + half_w  # default width centred on the tag, may overhang a stub
         cands.append({"wall": wi, "start": (ax + ux * lo, ay + uy * lo), "end": (ax + ux * hi, ay + uy * hi),
-                      "width": hi - lo, "cues": Counter(["tag_only"]), "tag": ttype})
+                      "width": hi - lo, "cues": Counter(["tag_only"]), "tag": ttype, "parts": []})
         used_t.add(k)
 
     typed = []

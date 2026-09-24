@@ -191,14 +191,38 @@ Regras, em ordem:
 | PROJETO_RESIDENCIAL PR_01 | 7 / 7 | 7 / 7 | 0 |
 | PROJETO_RESIDENCIAL PR_02 | 7 / 7 | 7 / 7 | 2 |
 
-Contagem e posição batem com as etiquetas nas quatro plantas. Larguras:
-portas de 0,70 a 0,80 m e janelas de 0,44 a 1,64 m saem coerentes com os
-quadros de esquadrias; três aberturas saíram largas demais (1,3 a 2,8 m)
-porque a folha se fundiu com um vão vizinho ou com a projeção do portão.
-Isso é o próximo ajuste. Sem etiquetas no desenho o sistema ainda funciona,
-com mais falsos positivos em móveis próximos das paredes.
+Contagem e posição batem com as etiquetas nas quatro plantas.
 
-Próximos passos: (a) larguras: não fundir folha com vão quando a folha já
-define a abertura; (b) fechar os trechos curtos de parede nos cantos;
-(c) conjunto de teste: revisar os quatro JSONs gerados e corrigir o que
-estiver errado, guardando fora do repositório.
+**Larguras (correção das fusões).** A primeira versão unia folhas
+sobrepostas (folha + batente + móvel encostado) e caixilhos que só tocavam a
+ponta da parede, dando portas de 1,3 a 2,8 m. Agora: duas folhas sobrepostas
+nunca se fundem, ficam como candidatas separadas e a etiqueta escolhe a de
+menor custo (com arco de giro, largura entre 0,55 e 1,05 m); caixilho só vale
+se pelo menos 70% dele está sobre a parede; interrupção acima de 2,5 m não é
+janela (é passagem ou frente de garagem); e a etiqueta sem candidato usa o
+pedaço curto de parede só se ele tem entre 0,4 e 1,2 m, senão largura padrão
+(0,80 porta, 0,60 janela) centrada na etiqueta.
+
+Larguras extraídas contra o quadro de esquadrias, onde ele existe:
+
+| Arquivo | Portas (quadro) | Portas extraídas | Janelas (quadro) | Janelas extraídas |
+|---|---|---|---|---|
+| CASA_HABITACIONAL | P1 0,70 ×2, P2 0,80 ×4, P3 1,00 | 0,70 ×2, 0,80 ×4, 0,80? | J1 0,40 ×2, J2 0,50 ×2, J3 1,40, J4 1,20 ×2 | 0,61 ×2, 0,50, 0,60?, 1,13, 1,20, 1,50 |
+| PROJETO_RESIDENCIAL PR_01/02 | P1 0,60/0,70, P2 0,70, P3, P4 | 0,62–0,72, 1,03 (P4) | J1 0,60, J4 1,60 | 0,61, 1,64 |
+| MINHA_CASA_MINHA_VIDA | sem quadro na prancha | 0,80 ×2, 0,80 | sem quadro | 0,50, 1,23, 1,40 |
+
+"?" marca abertura de confiança 0,5 (só etiqueta). Portas ficam dentro de
+±0,05 m do quadro; janelas por vão saem 0,2 a 0,3 m mais largas que o
+quadro porque o vão inclui o peitoril/batente, e as basculantes pequenas
+(J1 0,40) saem com o retângulo desenhado (0,61). Para o produto, a largura
+do quadro de esquadrias vale mais que a geometria: o próximo passo natural é
+ler a tabela "QUADRO DE ESQUADRIAS" do PDF (é texto) e sobrescrever a largura
+pelo código da etiqueta.
+
+Sem etiquetas no desenho o sistema ainda funciona só com as pistas
+geométricas, com mais falsos positivos em móveis encostados nas paredes.
+
+Próximos passos: (a) ler o quadro de esquadrias e usar as larguras dele;
+(b) fechar os trechos curtos de parede nos cantos; (c) conjunto de teste:
+revisar os quatro JSONs gerados e corrigir o que estiver errado, guardando
+fora do repositório.
