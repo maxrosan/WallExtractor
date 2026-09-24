@@ -60,6 +60,72 @@ Abra http://localhost:8000, informe o token, envie PDFs.
 5. Memória: o contêiner usa entre 300 e 600 MB em uso normal. Fica dentro dos
    6 a 8 GB do servidor com folga.
 
+### Deploy atual
+
+O editor está no ar desde 24/09/2026:
+
+- Painel: projeto `botai`, serviço **App** `wallextractor-editor`.
+- URL: https://botai-wallextractor-editor.uuclvw.easypanel.host
+- Origem: `github.com/maxrosan/WallExtractor`, branch
+  `claude/funny-bardeen-owrjyh`, build pelo `Dockerfile` da raiz.
+- Volume `wallextractor-data` montado em `/data` (PDFs, renders e o SQLite).
+  O banco é SQLite nesse volume; o Postgres (`PGDB`) ainda não é usado.
+- Variáveis do serviço: `EDITOR_TOKEN`, `EDITOR_DATA`, `PYTHONUNBUFFERED`.
+  A senha fica só no painel; não copie para o repositório.
+- Fila inicial: as quatro plantas brasileiras, todas *pendente*.
+
+### Redeploy pela API do painel
+
+A API do EasyPanel está descrita em `$EASYPANEL_URL/api/openapi.json`. As
+chamadas usam `Authorization: Bearer $EASYPANEL_TOKEN`. Deixe no ambiente,
+fora do repositório:
+
+```
+EASYPANEL_URL=https://...        # URL do painel, em HTTPS
+EASYPANEL_TOKEN=...              # token de API do painel
+EASYPANEL_PROJECT=botai
+```
+
+```
+H="Authorization: Bearer $EASYPANEL_TOKEN"
+Q="projectName=$EASYPANEL_PROJECT&serviceName=wallextractor-editor"
+
+# a sessão vale?
+curl -sS "$EASYPANEL_URL/api/getSession" -H "$H"
+
+# configuração do serviço (fonte, branch, volume). A resposta traz env com a
+# senha: não imprima nem salve esse JSON inteiro.
+curl -sS "$EASYPANEL_URL/api/inspectAppService?$Q" -H "$H" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["source"], d["mounts"])'
+
+# redeploy (puxa o último commit da branch configurada e reconstrói a imagem)
+curl -sS -X POST "$EASYPANEL_URL/api/deployAppService" -H "$H" \
+  -H 'Content-Type: application/json' \
+  -d "{\"projectName\":\"$EASYPANEL_PROJECT\",\"serviceName\":\"wallextractor-editor\",\"forceRebuild\":true}"
+
+# acompanhar: a última ação do tipo deployment deve chegar a status "done"
+curl -sS "$EASYPANEL_URL/api/listActions?$Q&limit=3" -H "$H"
+```
+
+Para trocar a branch, altere a fonte do serviço no painel antes de
+redeployar. Depois do deploy, confira:
+
+```
+E=https://botai-wallextractor-editor.uuclvw.easypanel.host
+curl -sS "$E/api/health"                          # {"ok":true,"plans":N}, sem token
+curl -sS "$E/api/plans" -H "X-Token: $EDITOR_TOKEN"   # 401 sem o header
+```
+
+A senha pode ser lida do painel sem ser exibida:
+
+```
+EDITOR_TOKEN=$(curl -sS "$EASYPANEL_URL/api/inspectAppService?$Q" -H "$H" | python3 -c \
+  'import json,sys; e=json.load(sys.stdin)["env"]; print(dict(l.split("=",1) for l in e.splitlines() if "=" in l)["EDITOR_TOKEN"])')
+```
+
+Como o SQLite e os PDFs ficam no volume `/data`, o redeploy mantém a fila e
+as correções.
+
 ## Ciclo com o treino
 
 ```
