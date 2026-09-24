@@ -50,6 +50,8 @@ class Source:
     file: str
     page: int = 1
     kind: str = "raster"  # "vector" | "raster"
+    region_pt: Optional[List[float]] = None  # [x0, y0, x1, y1] of the drawing on the page, PDF points
+    px_per_pt: Optional[float] = None  # image pixels per PDF point inside region_pt
 
 
 @dataclass

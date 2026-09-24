@@ -13,15 +13,17 @@ Documentação de decisão:
 ## Arquitetura
 
 ```
-PDF ──► wallextractor.pdf ──► PDF vetorial? ──sim──► primitivas (PyMuPDF) ──► regras ──┐
-                                   │                                                    ▼
-                                   └──não──► render 1024 px ──► SegFormer (ONNX, CPU) ──► máscara
-                                                                                          │
-                                                        wallextractor.vectorize ◄─────────┘
-                                                                  │
-                                                                  ▼
-                                                   JSON (wallextractor.schema)
+PDF ──► PDF vetorial? ──sim──► wallextractor.vector_walls ─────────────────────────────┐
+              │                 localiza a PLANTA BAIXA na prancha, escala pelas cotas,  │
+              │                 pareia linhas paralelas da pena grossa em paredes        ▼
+              └──não──► render 1024 px ──► SegFormer (ONNX, CPU) ──► máscara ──► vectorize
+                                                                                        │
+                                                                                        ▼
+                                                                         JSON (wallextractor.schema)
 ```
+
+O ramo vetorial não usa rede neural e roda em menos de 2 s por prancha em
+CPU. O ramo raster usa o modelo treinado em `docs/experimentos.md`.
 
 ## Uso
 

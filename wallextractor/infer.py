@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from .imageops import normalize, resize_pad
-from .pdf import extract_vector_primitives, is_vector, render_page, wall_candidates_from_primitives
+from .pdf import render_page
 from .vectorize import draw_plan, mask_to_plan
 
 
@@ -67,24 +67,58 @@ def segment_image(segmenter, rgb: np.ndarray, size: int = 512) -> np.ndarray:
     return cv2.resize(pred, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
+def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls: int = 4):
+    """Vector branch: locate the floor plan on the sheet, pair thick-pen lines into walls.
+
+    Returns ``(plan, rgb)`` with coordinates in pixels of the rendered plan
+    region, or ``None`` when the page does not look like a CAD export.
+    """
+    import pymupdf
+
+    from .schema import ImageInfo, Scale, Source, Wall, WallPlan
+    from .vector_walls import extract_walls
+
+    with pymupdf.open(pdf_path) as doc:
+        pg = doc[page - 1]
+        if len(pg.get_drawings()) < 50:
+            return None
+        walls_pt, region = extract_walls(pg)
+        if len(walls_pt) < min_walls:
+            return None
+        x0, y0, x1, y1 = region.rect
+        s = max_side / max(x1 - x0, y1 - y0)
+        pix = pg.get_pixmap(matrix=pymupdf.Matrix(s, s), clip=pymupdf.Rect(*region.rect), alpha=False,
+                            colorspace=pymupdf.csRGB)
+        rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
+    walls = [Wall(id=w.id, start=((w.start[0] - x0) * s, (w.start[1] - y0) * s),
+                  end=((w.end[0] - x0) * s, (w.end[1] - y0) * s), thickness=w.thickness * s) for w in walls_pt]
+    plan = WallPlan(
+        source=Source(file=os.path.basename(pdf_path), page=page, kind="vector",
+                      region_pt=[round(v, 2) for v in region.rect], px_per_pt=round(s, 4)),
+        image=ImageInfo(width=int(rgb.shape[1]), height=int(rgb.shape[0]), dpi=round(72.0 * s, 2)),
+        walls=walls,
+        scale=Scale(px_per_m=round(region.pt_per_m * s, 3) if region.pt_per_m else None,
+                    method=region.scale_method),
+    )
+    plan.notes = region.notes  # type: ignore[attr-defined]
+    return plan, rgb
+
+
 def extract(pdf_path: str, model_path: Optional[str], page: int = 1, max_side: int = 1024, size: int = 512,
             prefer_vector: bool = True):
-    rgb, px_per_pt = render_page(pdf_path, page=page, max_side=max_side)
     plan = None
-    if prefer_vector and is_vector(pdf_path, page):
-        prims = extract_vector_primitives(pdf_path, page, px_per_pt)
-        polys = wall_candidates_from_primitives(prims)
-        if polys:
-            from .geometry import rasterize_polygons
-
-            mask = rasterize_polygons(rgb.shape[:2], polys, 1)
-            plan = mask_to_plan(mask, source_file=os.path.basename(pdf_path), page=page, kind="vector")
+    rgb = None
+    if prefer_vector:
+        res = extract_vector(pdf_path, page=page, max_side=max(max_side, 2048))
+        if res is not None:
+            plan, rgb = res
     if plan is None:
+        rgb, px_per_pt = render_page(pdf_path, page=page, max_side=max_side)
         if not model_path:
             raise SystemExit("raster branch needs --model")
         mask = segment_image(load_segmenter(model_path), rgb, size=size)
         plan = mask_to_plan(mask, source_file=os.path.basename(pdf_path), page=page, kind="raster")
-    plan.image.dpi = round(72.0 * px_per_pt, 2)
+        plan.image.dpi = round(72.0 * px_per_pt, 2)
     return plan, rgb
 
 
@@ -108,7 +142,8 @@ def main(argv=None) -> int:
         print(text)
     if args.overlay:
         Image.fromarray(draw_plan(rgb, plan)).save(args.overlay)
-    print(json.dumps({"kind": plan.source.kind, "walls": len(plan.walls), "openings": len(plan.openings)}),
+    print(json.dumps({"kind": plan.source.kind, "walls": len(plan.walls), "openings": len(plan.openings),
+                      "px_per_m": plan.scale.px_per_m, "notes": getattr(plan, "notes", None)}, ensure_ascii=False),
           file=sys.stderr)
     return 0
 

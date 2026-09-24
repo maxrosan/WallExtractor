@@ -120,7 +120,45 @@ O que isso muda no plano:
 5. Para o ramo raster, o estilo real é "sólido fino" com contorno; E3 mostra
    que a augmentação já cobre isso razoavelmente.
 
-Próximos passos propostos: (a) localizador da região da planta baixa por
-texto + densidade de primitivas; (b) pareamento de linhas paralelas para
-paredes no ramo vetorial; (c) escala por consenso das cotas; (d) anotar
-essas quatro plantas como conjunto de teste, corrigindo a saída do sistema.
+### Ramo vetorial v1 (`wallextractor/vector_walls.py`)
+
+Implementado no mesmo dia, em cima do que os PDFs mostraram:
+
+1. **Localização da planta baixa na prancha.** Os traços da pena mais grossa
+   são agrupados em blocos; o bloco escolhido é o mais próximo de um rótulo
+   "PLANTA BAIXA" exato (o carimbo repete "PLANTA BAIXA, PLANTA DE
+   COBERTURA..." e é descartado pela vírgula e pela pontuação por tinta).
+   Sem rótulo, vale o bloco com mais tinta. Cobertura, fachadas, cortes e
+   localização ficam de fora.
+2. **Pena de parede.** A espessura de traço mais grossa com pelo menos 10
+   segmentos dentro da região (0,96 a 1,56 pt nos quatro arquivos). Portas e
+   janelas usam pena mais fina.
+3. **Pareamento de paralelas.** Dois segmentos da pena de parede, paralelos
+   a menos de 2° e distantes entre 8 e 40 cm, viram uma parede na linha média
+   do trecho em que se sobrepõem, com espessura igual à distância. Depois os
+   trechos colineares são fundidos.
+4. **Escala por consenso das cotas.** Para cada número no formato 3.62 dentro
+   da região, a linha fina mais próxima com a mesma orientação (fundindo os
+   pedaços partidos em volta do texto) dá um candidato comprimento/valor; a
+   mediana do maior grupo concordante é a escala. **Ela vale mais que o
+   rótulo**: três das quatro pranchas foram plotadas com "ajustar à página".
+
+| Arquivo | Rótulo | Escala nominal | Escala efetiva (cotas) | Paredes | Comprimento total | Espessura mediana | Cotado no desenho |
+|---|---|---|---|---|---|---|---|
+| MINHA_CASA_MINHA_VIDA | nenhum | nenhuma | 1:52,6 (22 cotas) | 31 | 93,5 m | 0,130 m | .13 |
+| CASA_HABITACIONAL | achado | 1:75 | 1:69,2 (23 cotas), 108% | 31 | 104,6 m | 0,130 m | .13 |
+| PROJETO_RESIDENCIAL PR_01 | achado | 1:50 | 1:51,4 (33 cotas), 97% | 34 | 79,7 m | 0,122 m | .12 |
+| PROJETO_RESIDENCIAL PR_02 (rot. 270°) | achado | 1:100 | 1:91,1 (34 cotas), 110% | 42 | 102,8 m | 0,120 m | .12 |
+
+A espessura mediana extraída coincide com a espessura cotada nos quatro
+desenhos, o que valida escala e pareamento ao mesmo tempo. Nos overlays as
+paredes internas e externas e o muro do lote aparecem no lugar; faltam
+alguns trechos curtos junto a portas e ainda não há portas e janelas no
+ramo vetorial (elas estão na pena de 0,72 pt e são o próximo passo).
+
+Custo: zero. Tudo roda em CPU em menos de 2 s por prancha.
+
+Próximos passos: (a) portas e janelas no ramo vetorial a partir da pena
+intermediária e dos vãos entre paredes; (b) fechar os trechos curtos que o
+pareamento perde nos cantos; (c) conjunto de teste: revisar os quatro JSONs
+gerados e corrigir o que estiver errado, guardando fora do repositório.
