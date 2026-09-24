@@ -1,0 +1,7 @@
+# Inference on the CPU-only server (easypanel-max): no torch.
+numpy
+opencv-python-headless
+pillow
+scikit-image
+pymupdf
+onnxruntime

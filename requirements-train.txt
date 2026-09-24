@@ -1,0 +1,7 @@
+# Training on RunPod (torch comes with the runpod/pytorch image).
+-r requirements.txt
+transformers>=4.40
+safetensors
+onnx
+onnxscript
+remotezip
