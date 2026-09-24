@@ -59,3 +59,11 @@ td button{font-size:11px;padding:2px 6px}
 @media (max-width:1000px){#app{grid-template-columns:200px 1fr 280px}}
 
 .modal[hidden]{display:none}
+.ctx{position:absolute;z-index:10;min-width:210px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.15);padding:4px;display:flex;flex-direction:column}
+.ctx[hidden],.ctx [hidden]{display:none}
+.ctx button{font:inherit;text-align:left;background:transparent;border:0;border-radius:4px;padding:5px 8px;cursor:pointer;color:var(--ink);display:flex;justify-content:space-between;gap:12px}
+.ctx button:hover{background:#EAF0FA}
+.ctx button.danger{color:var(--danger)}
+.ctx kbd{font:11px ui-monospace,monospace;color:var(--muted)}
+.ctx hr{border:0;border-top:1px solid var(--line);margin:4px 0}
+.ctx-h{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:4px 8px 2px}

@@ -28,6 +28,22 @@ página estática) e `Dockerfile` na raiz.
   `train_seg`. A saída da máquina fica guardada ao lado da correção para
   medir a evolução do sistema.
 
+## Girar
+
+Clique com o botão direito sobre uma parede ou abertura. A ponta mais próxima
+do clique fica marcada em laranja e serve de eixo para as opções "na ponta
+marcada"; as opções "no centro" giram em torno do meio.
+
+**Girar para a parede** (só em aberturas) resolve o caso da porta que a
+máquina desenhou em cima da folha aberta: testa ±90° em torno de cada ponta
+(a dobradiça) e do centro e escolhe a posição que cai no vão entre duas
+paredes alinhadas. Se o resultado sair do lado errado, Ctrl+Z e use "Girar
+90°" na ponta marcada.
+
+Ao girar uma abertura, ela é encaixada na parede alinhada mais próxima; se não
+houver nenhuma, fica solta (sem `wall_id`). Ao girar uma parede, as aberturas
+dela giram junto.
+
 ## Atalhos
 
 | Tecla | Ação |
@@ -36,6 +52,8 @@ página estática) e `Dockerfile` na raiz.
 | Delete | excluir seleção |
 | Ctrl+Z / Ctrl+Y | desfazer / refazer |
 | [ / ] | espessura da parede selecionada −1 / +1 cm |
+| R / Shift+R | girar a seleção 90° no sentido horário / anti-horário, em torno do centro |
+| botão direito | menu da parede ou abertura: girar no centro ou na ponta marcada (a mais próxima do clique), outro ângulo, girar para a parede, dividir, excluir |
 | Esc | cancelar desenho ou seleção |
 | roda do mouse | zoom (acima de 125% a planta é re-renderizada nítida do PDF) |
 

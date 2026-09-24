@@ -42,6 +42,21 @@
     </div>
     <div id="stage-wrap"><div id="stage"></div>
       <div id="hint" class="hint">Escolha uma planta na fila.</div>
+      <div id="ctx" class="ctx" hidden>
+        <button data-rot="fit" data-only="opening">Girar para a parede</button>
+        <hr data-only="opening">
+        <div class="ctx-h">No centro</div>
+        <button data-rot="90" data-pivot="center">Girar 90° ↻ <kbd>R</kbd></button>
+        <button data-rot="-90" data-pivot="center">Girar 90° ↺ <kbd>Shift+R</kbd></button>
+        <button data-rot="180" data-pivot="center">Girar 180°</button>
+        <div class="ctx-h">Na ponta marcada</div>
+        <button data-rot="90" data-pivot="end">Girar 90° ↻</button>
+        <button data-rot="-90" data-pivot="end">Girar 90° ↺</button>
+        <button data-rot="ask" data-pivot="end">Girar outro ângulo…</button>
+        <hr>
+        <button data-act="split" data-only="wall">Dividir no meio</button>
+        <button data-act="del" class="danger">Excluir</button>
+      </div>
     </div>
   </main>
 

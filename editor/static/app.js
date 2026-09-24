@@ -181,7 +181,7 @@ function renderHandles() {
       let p = [h.x(), h.y()];
       if (S.sel.kind === "wall") { const other = end === "start" ? item.end : item.start; const sn = snapPoint(p, { skipWall: item.id, anchor: other }); p = sn.pt; showSnap(sn); item[end] = p; item.polygon = null;
         showMeasure(`${fmtM(dist(item.start, item.end))} · espessura ${fmtM(item.thickness)}`); }
-      else { const w = wallById(item.wall_id); if (w) { const t = Math.max(0, Math.min(axis(w).L, proj(w, p))); p = atT(w, t); }
+      else { const w = wallById(item.wall_id); if (w) p = atT(w, proj(w, p)); // along the wall line, also across a gap past its end
         const sn = snapPoint(p, { tol: 7 }); if (sn.kind === "prim" || sn.kind === "primline") { const w2 = wallById(item.wall_id); p = w2 ? atT(w2, proj(w2, sn.pt)) : sn.pt; showSnap(sn); } else showSnap(null);
         item[end] = p; item.width = dist(item.start, item.end); item.polygon = null; item.width_source = "editor"; showMeasure(`largura ${fmtM(item.width)}`); }
       h.position({ x: p[0], y: p[1] }); redrawItem(item);
@@ -227,9 +227,90 @@ function splitSel() {
   S.plan.walls.push(w2); changed();
 }
 
+// rotation: deg > 0 is clockwise on screen (y points down)
+function rotPt(p, c, deg) { const a = deg * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a), dx = p[0] - c[0], dy = p[1] - c[1];
+  return [c[0] + dx * cs - dy * sn, c[1] + dx * sn + dy * cs]; }
+function pivotOf(item, pivot) { return pivot === "start" || pivot === "end" ? [...item[pivot]] : [(item.start[0] + item.end[0]) / 2, (item.start[1] + item.end[1]) / 2]; }
+// the wall an opening belongs to: parallel within 5°, on the wall's line, touching or overlapping its extent
+// (the extractor splits walls at openings, so a door usually sits in the gap between two collinear walls).
+// overlap = share of the opening covered by solid wall; a real opening is mostly in a gap.
+function wallUnder(o) {
+  const mid = [(o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2]; const L = dist(o.start, o.end) || 1e-9;
+  const ox = (o.end[0] - o.start[0]) / L, oy = (o.end[1] - o.start[1]) / L; const tol = 12 / stage.scaleX();
+  let best = null, covered = 0;
+  for (const w of S.plan.walls) { const { ux, uy, L: wl } = axis(w); const band = Math.max(tol, w.thickness);
+    if (Math.abs(ox * ux + oy * uy) < Math.cos(5 * Math.PI / 180)) continue;
+    const d = perpDist(w, mid); if (d > band) continue;
+    const t0 = proj(w, o.start), t1 = proj(w, o.end), lo = Math.min(t0, t1), hi = Math.max(t0, t1);
+    const apart = Math.max(0, lo - wl, -hi); if (apart > band) continue;
+    covered += Math.max(0, Math.min(hi, wl) - Math.max(lo, 0));
+    if (!best || d + apart < best.d + best.apart) best = { w, d, apart };
+  }
+  return best && { w: best.w, d: best.d, overlap: Math.min(1, covered / L) };
+}
+function attachOpening(o) {
+  const hit = wallUnder(o); o.polygon = null;
+  if (!hit) { o.wall_id = null; return false; }
+  const w = hit.w; o.wall_id = w.id; o.start = atT(w, proj(w, o.start)); o.end = atT(w, proj(w, o.end)); o.width = dist(o.start, o.end); return true;
+}
+function rotateSel(deg, pivot = "center") {
+  if (!S.sel || !deg) return; const item = selItem(); if (!item) return; pushUndo();
+  const c = pivotOf(item, pivot);
+  if (S.sel.kind === "wall") {
+    item.start = rotPt(item.start, c, deg); item.end = rotPt(item.end, c, deg); item.polygon = null;
+    for (const o of S.plan.openings.filter(o => o.wall_id === item.id)) { o.start = rotPt(o.start, c, deg); o.end = rotPt(o.end, c, deg); o.polygon = null; }
+  } else {
+    item.start = rotPt(item.start, c, deg); item.end = rotPt(item.end, c, deg);
+    hint(attachOpening(item) ? "Abertura girada e encaixada na parede." : "Abertura girada; não está sobre nenhuma parede.");
+  }
+  changed();
+}
+// the door leaf case: the machine drew the door along the open leaf. Try ±90° around each end (the hinge)
+// and the centre; keep the candidate that lands in a wall gap (least solid wall under it), then the closest.
+function rotateToWall(prefer) {
+  if (!S.sel || S.sel.kind !== "opening") return; const o = selItem(); if (!o) return;
+  const other = prefer === "start" ? "end" : "start"; let best = null;
+  for (const pivot of [prefer || "start", other, "center"]) for (const deg of [90, -90]) {
+    const c = pivotOf(o, pivot); const cand = { start: rotPt(o.start, c, deg), end: rotPt(o.end, c, deg) }; const hit = wallUnder(cand);
+    if (!hit) continue;
+    if (!best || hit.overlap < best.hit.overlap - 0.05 || (Math.abs(hit.overlap - best.hit.overlap) <= 0.05 && hit.d < best.hit.d - 1e-6)) best = { pivot, deg, hit };
+  }
+  if (!best) { hint("Nenhuma parede encontrada girando 90° nas pontas ou no centro."); return; }
+  rotateSel(best.deg, best.pivot);
+}
+function selItem() { return S.sel && (S.sel.kind === "wall" ? wallById(S.sel.id) : S.plan.openings.find(o => o.id === S.sel.id)); }
+
+// context menu (right click on a wall or opening)
+const ctx = $("#ctx"); let ctxEnd = "start", ctxMark = null;
+function closeCtx() { ctx.hidden = true; if (ctxMark) { ctxMark.destroy(); ctxMark = null; uiLayer.batchDraw(); } }
+stage.on("contextmenu", e => {
+  e.evt.preventDefault(); closeCtx();
+  const id = e.target && e.target.id && e.target.id(); if (!S.plan || !id || !/^[wo]:/.test(id)) return;
+  select(id[0] === "w" ? "wall" : "opening", id.slice(2)); const item = selItem(); const p = worldPointer(); if (!item || !p) return;
+  ctxEnd = dist(p, item.start) <= dist(p, item.end) ? "start" : "end";
+  const k = stage.scaleX(); ctxMark = new Konva.Circle({ x: item[ctxEnd][0], y: item[ctxEnd][1], radius: 8 / k, stroke: COLORS.snap, strokeWidth: 3 / k, listening: false });
+  uiLayer.add(ctxMark); uiLayer.batchDraw();
+  $$("[data-only]", ctx).forEach(el => { el.hidden = el.dataset.only !== S.sel.kind; });
+  const wrap = $("#stage-wrap").getBoundingClientRect(); ctx.hidden = false;
+  ctx.style.left = Math.min(e.evt.clientX - wrap.left, wrap.width - ctx.offsetWidth - 4) + "px";
+  ctx.style.top = Math.min(e.evt.clientY - wrap.top, wrap.height - ctx.offsetHeight - 4) + "px";
+});
+ctx.addEventListener("contextmenu", e => e.preventDefault());
+ctx.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return; const end = ctxEnd; closeCtx();
+  if (b.dataset.act === "del") return deleteSel();
+  if (b.dataset.act === "split") return splitSel();
+  if (b.dataset.rot === "fit") return rotateToWall(end);
+  const pivot = b.dataset.pivot === "end" ? end : "center";
+  if (b.dataset.rot === "ask") { const v = parseFloat(String(prompt("Ângulo em graus (positivo gira no sentido horário):", "90") || "").replace(",", ".")); if (Number.isFinite(v)) rotateSel(v, pivot); return; }
+  rotateSel(parseFloat(b.dataset.rot), pivot);
+});
+document.addEventListener("mousedown", e => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); });
+stage.on("wheel dragstart", closeCtx);
+
 // ------------------------------------------------------------------ drawing tools
 stage.on("mousedown touchstart", e => {
-  const p = worldPointer(); if (!p || !S.plan) return;
+  const p = worldPointer(); if (!p || !S.plan || (e.evt && e.evt.button === 2)) return;
   if (S.tool === "select") { if (e.target === stage) select(null); return; }
   if (S.tool === "wall") {
     const sn = snapPoint(p, S.draw ? { anchor: S.draw.p1 } : {});
@@ -288,7 +369,7 @@ $("#calib-ok").addEventListener("click", () => {
 function setTool(t) { S.tool = t; S.draw = null; S.calib = null; clearPreview(); showSnap(null); stage.draggable(true);
   $$("#toolbar .tool").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
   $("#stage").style.cursor = t === "select" ? "default" : "crosshair";
-  hint({ select: "Clique para selecionar, arraste para mover. Pontas: redimensionar. Roda do mouse: zoom.", wall: "Clique no início e no fim da parede. Encaixa nas linhas do PDF e em 0/90°.",
+  hint({ select: "Clique para selecionar, arraste para mover. Pontas: redimensionar. Botão direito: girar. Roda do mouse: zoom.", wall: "Clique no início e no fim da parede. Encaixa nas linhas do PDF e em 0/90°.",
     door: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.", window: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.",
     calib: "Clique em dois pontos com distância conhecida e informe a medida." }[t]); render(); }
 $$("#toolbar .tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
@@ -299,7 +380,8 @@ document.addEventListener("keydown", e => {
   if (e.target.matches("input, select, textarea")) return;
   const k = e.key.toLowerCase();
   if (k === "v") setTool("select"); else if (k === "w") setTool("wall"); else if (k === "d") setTool("door"); else if (k === "j") setTool("window"); else if (k === "c") setTool("calib");
-  else if (k === "escape") { S.draw = null; S.calib = null; clearPreview(); showSnap(null); $("#calib-box").hidden = true; select(null); }
+  else if (k === "r" && !e.ctrlKey && !e.metaKey && S.sel) { rotateSel(e.shiftKey ? -90 : 90); closeCtx(); }
+  else if (k === "escape") { closeCtx(); S.draw = null; S.calib = null; clearPreview(); showSnap(null); $("#calib-box").hidden = true; select(null); }
   else if (k === "delete" || k === "backspace") { deleteSel(); e.preventDefault(); }
   else if ((e.ctrlKey || e.metaKey) && k === "z") { e.shiftKey ? redo() : undo(); e.preventDefault(); }
   else if ((e.ctrlKey || e.metaKey) && k === "y") { redo(); e.preventDefault(); }
