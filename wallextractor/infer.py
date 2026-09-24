@@ -75,14 +75,14 @@ def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls
     """
     import pymupdf
 
-    from .schema import ImageInfo, Scale, Source, Wall, WallPlan
+    from .schema import ImageInfo, Opening, Scale, Source, Wall, WallPlan
     from .vector_walls import extract_walls
 
     with pymupdf.open(pdf_path) as doc:
         pg = doc[page - 1]
         if len(pg.get_drawings()) < 50:
             return None
-        walls_pt, region = extract_walls(pg)
+        walls_pt, openings_pt, region = extract_walls(pg)
         if len(walls_pt) < min_walls:
             return None
         x0, y0, x1, y1 = region.rect
@@ -92,11 +92,16 @@ def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls
         rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
     walls = [Wall(id=w.id, start=((w.start[0] - x0) * s, (w.start[1] - y0) * s),
                   end=((w.end[0] - x0) * s, (w.end[1] - y0) * s), thickness=w.thickness * s) for w in walls_pt]
+    openings = [Opening(id=o.id, type=o.type, start=((o.start[0] - x0) * s, (o.start[1] - y0) * s),
+                        end=((o.end[0] - x0) * s, (o.end[1] - y0) * s), width=o.width * s, wall_id=o.wall_id,
+                        confidence=o.confidence)
+                for o in openings_pt]
     plan = WallPlan(
         source=Source(file=os.path.basename(pdf_path), page=page, kind="vector",
                       region_pt=[round(v, 2) for v in region.rect], px_per_pt=round(s, 4)),
         image=ImageInfo(width=int(rgb.shape[1]), height=int(rgb.shape[0]), dpi=round(72.0 * s, 2)),
         walls=walls,
+        openings=openings,
         scale=Scale(px_per_m=round(region.pt_per_m * s, 3) if region.pt_per_m else None,
                     method=region.scale_method),
     )

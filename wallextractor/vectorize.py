@@ -122,5 +122,8 @@ def draw_plan(image: np.ndarray, plan: WallPlan) -> np.ndarray:
         cv2.line(out, tuple(map(int, wl.start)), tuple(map(int, wl.end)), (220, 30, 30), max(1, int(round(wl.thickness))))
     for op in plan.openings:
         color = (30, 180, 30) if op.type == "door" else (30, 60, 220)
-        cv2.line(out, tuple(map(int, op.start)), tuple(map(int, op.end)), color, max(1, int(round(op.width))))
+        # draw the opening as a bar of the wall's thickness along the gap (width is the gap length)
+        thick = next((w.thickness for w in plan.walls if w.id == op.wall_id), None)
+        bar = int(round(thick)) if thick else max(2, int(round(op.width * 0.15)))
+        cv2.line(out, tuple(map(int, op.start)), tuple(map(int, op.end)), color, max(2, bar))
     return out

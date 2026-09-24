@@ -158,7 +158,47 @@ ramo vetorial (elas estão na pena de 0,72 pt e são o próximo passo).
 
 Custo: zero. Tudo roda em CPU em menos de 2 s por prancha.
 
-Próximos passos: (a) portas e janelas no ramo vetorial a partir da pena
-intermediária e dos vãos entre paredes; (b) fechar os trechos curtos que o
-pareamento perde nos cantos; (c) conjunto de teste: revisar os quatro JSONs
-gerados e corrigir o que estiver errado, guardando fora do repositório.
+### Portas e janelas no ramo vetorial (`find_openings`)
+
+O que os desenhos mostraram: a porta é desenhada fechada, como um retângulo
+fino de 0,7 a 0,8 m paralelo à parede e deslocado uns 0,2 m do eixo, com o
+arco de giro tracejado (ou em polilinha), e as linhas da parede continuam
+por trás; a janela é um grupo de 2 a 3 linhas de pena intermediária dentro
+da faixa da parede, e às vezes é desenhada com a própria pena da parede
+(vira um "pedaço de parede" curto). Toda esquadria leva uma etiqueta "P2"
+ou "J1" do quadro de esquadrias, colocada a menos de 0,5 m do vão.
+
+Regras, em ordem:
+
+1. Candidatos por parede: folha fechada (par de linhas paralelas à parede,
+   fora da faixa, 0,6–1,3 m, confirmada por ≥3 pedaços de arco no círculo de
+   raio igual à folha em torno da dobradiça); folha aberta (segmento
+   perpendicular com arco encadeado ou ≥5 pedaços no círculo); caixilho
+   (≥2 linhas com extremos coincidentes dentro da faixa); vão entre paredes
+   colineares.
+2. Cada etiqueta é casada com o candidato de menor custo (distância mais
+   penalidade se as pistas não combinam com o tipo). Quando o desenho tem
+   etiquetas, só candidatos etiquetados viram abertura; sem etiquetas, valem
+   as pistas geométricas.
+3. Etiqueta sem candidato vira abertura de confiança 0,5 na parede mais
+   próxima: um pedaço curto de parede ao lado dela é a própria janela
+   desenhada com a pena da parede.
+
+| Arquivo | Etiquetas P / J | Portas / janelas extraídas | Confiança 0,5 |
+|---|---|---|---|
+| MINHA_CASA_MINHA_VIDA | 3 / 3 | 3 / 3 | 0 |
+| CASA_HABITACIONAL | 7 / 7 | 7 / 7 | 0 |
+| PROJETO_RESIDENCIAL PR_01 | 7 / 7 | 7 / 7 | 0 |
+| PROJETO_RESIDENCIAL PR_02 | 7 / 7 | 7 / 7 | 2 |
+
+Contagem e posição batem com as etiquetas nas quatro plantas. Larguras:
+portas de 0,70 a 0,80 m e janelas de 0,44 a 1,64 m saem coerentes com os
+quadros de esquadrias; três aberturas saíram largas demais (1,3 a 2,8 m)
+porque a folha se fundiu com um vão vizinho ou com a projeção do portão.
+Isso é o próximo ajuste. Sem etiquetas no desenho o sistema ainda funciona,
+com mais falsos positivos em móveis próximos das paredes.
+
+Próximos passos: (a) larguras: não fundir folha com vão quando a folha já
+define a abertura; (b) fechar os trechos curtos de parede nos cantos;
+(c) conjunto de teste: revisar os quatro JSONs gerados e corrigir o que
+estiver errado, guardando fora do repositório.

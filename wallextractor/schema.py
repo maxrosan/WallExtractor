@@ -43,6 +43,7 @@ class Opening:
     width: float
     wall_id: Optional[str] = None
     polygon: Optional[List[Point]] = None
+    confidence: float = 1.0  # 1.0 geometry + tag; 0.5 tag only (extent inferred)
 
 
 @dataclass
