@@ -222,7 +222,29 @@ pelo código da etiqueta.
 Sem etiquetas no desenho o sistema ainda funciona só com as pistas
 geométricas, com mais falsos positivos em móveis encostados nas paredes.
 
-Próximos passos: (a) ler o quadro de esquadrias e usar as larguras dele;
-(b) fechar os trechos curtos de parede nos cantos; (c) conjunto de teste:
-revisar os quatro JSONs gerados e corrigir o que estiver errado, guardando
-fora do repositório.
+### Quadro de esquadrias e dúvidas (`wallextractor/schedule.py`)
+
+O quadro é lido do texto do PDF em qualquer página: um código ("P1", "J3")
+fora da região do desenho seguido, na mesma linha, de pelo menos dois
+números no formato 0,70 (LARG, ALT, opcionalmente PEIT), depois TIPO,
+MATERIAL e QUANT. A largura do quadro sobrescreve a geometria
+(`width_source = "schedule"`), e altura, peitoril e tipo vão para o JSON.
+
+| Arquivo | Quadro | Efeito |
+|---|---|---|
+| CASA_HABITACIONAL | 7 linhas lidas como texto | As 14 aberturas com largura do quadro, quantidades batem (sem dúvidas) |
+| PROJETO_RESIDENCIAL PR_01 / PR_02 | tabela desenhada em contorno (928 paths, 0 palavras) | Larguras da geometria, dúvida gerada |
+| MINHA_CASA_MINHA_VIDA | sem quadro na prancha | Larguras da geometria, dúvida gerada |
+
+**Dúvidas para o humano.** O JSON traz `questions`: quadro ilegível (lista
+as larguras por código para confirmar), quantidade do quadro diferente da
+encontrada, e aberturas posicionadas só pela etiqueta. As respostas vão num
+JSON `{"P1": 0.70, "J1": 0.40}` passado ao `infer --answers`, que vale mais
+que quadro e geometria (`width_source = "answer"`). Esses arquivos de
+resposta são a anotação humana do conjunto de teste e o material para o
+fine-tuning futuro do Qwen (imagem da planta + JSON corrigido).
+
+Próximos passos: (a) fechar os trechos curtos de parede nos cantos;
+(b) OCR ou reconhecimento dos glifos em contorno para ler quadros desenhados
+como paths; (c) coletar as respostas e montar `data/annotations/` (fora do
+repositório) como conjunto de teste.

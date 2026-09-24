@@ -445,8 +445,12 @@ def _merge_walls(cands: List[Tuple[Point, Point, float]], angle_tol_deg: float =
 
 
 def extract_walls(page, region: Optional[PlanRegion] = None, thickness_m: Tuple[float, float] = (0.08, 0.40),
-                  min_length_m: float = 0.20, with_openings: bool = True):
+                  min_length_m: float = 0.20, with_openings: bool = True,
+                  answers: Optional[Dict[str, float]] = None):
     """Vector wall (and opening) extraction for one page.
+
+    ``answers`` maps a frame code ("P2") to a confirmed width in metres; it
+    overrides both the geometry and the printed schedule.
 
     Returns ``(walls, openings, region)`` with coordinates in page points.
     """
@@ -468,7 +472,7 @@ def extract_walls(page, region: Optional[PlanRegion] = None, thickness_m: Tuple[
     region.notes.append(f"pen={pen} thick_segments={len(thick)} pairs={len(cands)} walls={len(walls)}")
     openings: List[Opening] = []
     if with_openings:
-        openings = find_openings(page, walls, segs, region)
+        openings = find_openings(page, walls, segs, region, answers=answers)
     return walls, openings, region
 
 
@@ -629,7 +633,7 @@ def chain_curves(curves: Sequence[Tuple[Point, Point, float]], tol: float = 0.6)
 
 
 def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: PlanRegion,
-                  width_m: Tuple[float, float] = (0.30, 4.00)) -> List[Opening]:
+                  width_m: Tuple[float, float] = (0.30, 4.00), answers: Optional[Dict[str, float]] = None) -> List[Opening]:
     """Doors and windows of a vector plan, cue first.
 
     Per wall, candidates come from independent cues and are merged by overlap:
@@ -648,11 +652,13 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
     pen = region.wall_pen_width or 1.0
     band_tol = 0.5
     words = _words(page)
-    tags = []
+    tags = []  # (point, type, code)
     for w in words:
         m = _TAG_RE.match(w[4].strip())
         if m and x0 - 20 <= w[0] <= x1 + 20 and y0 - 20 <= w[1] <= y1 + 20:
-            tags.append((((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), "door" if m.group(1).upper() == "P" else "window"))
+            code = re.sub(r"[^A-Za-z0-9]", "", w[4]).upper()
+            tags.append((((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), "door" if m.group(1).upper() == "P" else "window",
+                         code))
     curves = [c for c in page_curves(page) if x0 <= c[0][0] <= x1 and y0 <= c[0][1] <= y1]
     arcs = [a for a in chain_curves(curves) if 0.5 * w_min <= math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1])]
     thin_all = [s for s in segs if 1e-3 < s.width < pen - 1e-3 and _inside(s, region.rect) and s.length > 2.0]
@@ -822,7 +828,7 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
     # Tag -> candidate assignment. Cost = distance plus penalties when the candidate's cues do not
     # fit the tag type (a "P" tag wants a door leaf, a "J" tag wants frame lines or a wall gap).
     pairs = []
-    for k, (tp, ttype) in enumerate(tags):
+    for k, (tp, ttype, _code) in enumerate(tags):
         for ci, c in enumerate(cands):
             cx, cy = (c["start"][0] + c["end"][0]) / 2, (c["start"][1] + c["end"][1]) / 2
             d = math.hypot(tp[0] - cx, tp[1] - cy)
@@ -857,12 +863,13 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
         used_c.add(ci)
         taken_centres.append((cx, cy))
         c["tag"] = ttype
+        c["code"] = tags[k][2]
     tagged_drawing = len(tags) >= 3
 
     region.candidates = cands  # type: ignore[attr-defined]  (inspection / annotation aid)
     # Tags with no candidate: the opening is on the nearest wall. A short wall piece next to the tag is
     # a window/door drawn with the wall pen (its lines were paired as a "wall"); otherwise use a default width.
-    for k, (tp, ttype) in enumerate(tags):
+    for k, (tp, ttype, code) in enumerate(tags):
         if k in used_t:
             continue
         best = None
@@ -883,7 +890,7 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             t = min(max(t, 0.0), L)
             lo, hi = t - half_w, t + half_w  # default width centred on the tag, may overhang a stub
         cands.append({"wall": wi, "start": (ax + ux * lo, ay + uy * lo), "end": (ax + ux * hi, ay + uy * hi),
-                      "width": hi - lo, "cues": Counter(["tag_only"]), "tag": ttype, "parts": []})
+                      "width": hi - lo, "cues": Counter(["tag_only"]), "tag": ttype, "code": code, "parts": []})
         used_t.add(k)
 
     typed = []
@@ -911,9 +918,60 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             continue
         openings.append(Opening(id=f"o{len(openings) + 1}", type=otype, start=c["start"], end=c["end"],
                                 width=c["width"], wall_id=walls[c["wall"]].id,
-                                confidence=0.5 if c["cues"]["tag_only"] else 1.0))
+                                confidence=0.5 if c["cues"]["tag_only"] else 1.0, code=c.get("code"),
+                                width_source="default" if c["cues"]["tag_only"] and c["width"] < 0 else "geometry"))
+    apply_schedule(page, openings, region, tags, ppm, answers=answers)
     n_d = sum(o.type == "door" for o in openings)
     region.notes.append(f"opening cues: candidates={len(cands)} tags={len(tags)} matched_tags={len(used_t)} "
                         f"tags_required={tagged_drawing} "
                         f"arcs={len(arcs)} -> doors={n_d} windows={len(openings) - n_d}")
     return openings
+
+
+def apply_schedule(page, openings: List[Opening], region: PlanRegion, tags, ppm: float,
+                   answers: Optional[Dict[str, float]] = None) -> None:
+    """Override opening widths with the printed schedule (or the user's answers) and list open questions."""
+    from .schedule import read_schedule
+
+    questions: List[str] = []
+    doc = page.parent
+    sched = read_schedule(doc, exclude={page.number: region.rect}) if doc is not None else None
+    if sched is not None:
+        region.notes.extend(sched.notes)
+    answers = {k.upper(): float(v) for k, v in (answers or {}).items()}
+    codes_found: Counter = Counter(o.code for o in openings if o.code)
+    for o in openings:
+        if not o.code:
+            continue
+        row = sched.get(o.code) if sched else None
+        new_w = None
+        if o.code in answers:
+            new_w, o.width_source = answers[o.code] * ppm, "answer"
+        elif row is not None:
+            new_w, o.width_source = row.width_m * ppm, "schedule"
+            o.height_m, o.sill_m, o.kind = row.height_m, row.sill_m, row.kind
+        if new_w is not None and o.width > 0:
+            cx, cy = (o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2
+            ux, uy = (o.end[0] - o.start[0]) / o.width, (o.end[1] - o.start[1]) / o.width
+            o.start = (cx - ux * new_w / 2, cy - uy * new_w / 2)
+            o.end = (cx + ux * new_w / 2, cy + uy * new_w / 2)
+            o.width = new_w  # confidence still describes the position (tag-only stays 0.5)
+    # questions for a human
+    if sched is not None and not sched.rows:
+        geo = ", ".join(
+            f"{c}=" + "/".join(f"{v:.2f}" for v in sorted({round(o.width / ppm, 2) for o in openings if o.code == c})) + " m"
+            for c in sorted(codes_found))
+        questions.append("Quadro de esquadrias não legível como texto (tabela em contorno ou ausente). "
+                         f"Larguras vieram da geometria: {geo}. Confirme ou corrija por código.")
+    if sched is not None:
+        for code, row in sorted(sched.rows.items()):
+            n = codes_found.get(code, 0)
+            if row.quantity is not None and n != row.quantity:
+                questions.append(f"Quadro diz {row.quantity} x {code} ({row.width_m:.2f} m); encontrei {n} na planta.")
+    for o in openings:
+        if o.confidence < 1.0:
+            questions.append(f"{o.code or o.type}: posição inferida só pela etiqueta (largura {o.width / ppm:.2f} m, "
+                             f"parede {o.wall_id}). Confirme posição e largura.")
+        elif o.width_source == "geometry" and o.code and (sched is None or not sched.rows):
+            pass  # already covered by the schedule question
+    region.questions = questions  # type: ignore[attr-defined]

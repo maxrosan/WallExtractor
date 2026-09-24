@@ -67,7 +67,8 @@ def segment_image(segmenter, rgb: np.ndarray, size: int = 512) -> np.ndarray:
     return cv2.resize(pred, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
-def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls: int = 4):
+def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls: int = 4,
+                   answers: Optional[dict] = None):
     """Vector branch: locate the floor plan on the sheet, pair thick-pen lines into walls.
 
     Returns ``(plan, rgb)`` with coordinates in pixels of the rendered plan
@@ -82,7 +83,7 @@ def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls
         pg = doc[page - 1]
         if len(pg.get_drawings()) < 50:
             return None
-        walls_pt, openings_pt, region = extract_walls(pg)
+        walls_pt, openings_pt, region = extract_walls(pg, answers=answers)
         if len(walls_pt) < min_walls:
             return None
         x0, y0, x1, y1 = region.rect
@@ -94,7 +95,8 @@ def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls
                   end=((w.end[0] - x0) * s, (w.end[1] - y0) * s), thickness=w.thickness * s) for w in walls_pt]
     openings = [Opening(id=o.id, type=o.type, start=((o.start[0] - x0) * s, (o.start[1] - y0) * s),
                         end=((o.end[0] - x0) * s, (o.end[1] - y0) * s), width=o.width * s, wall_id=o.wall_id,
-                        confidence=o.confidence)
+                        confidence=o.confidence, code=o.code, width_source=o.width_source, height_m=o.height_m,
+                        sill_m=o.sill_m, kind=o.kind)
                 for o in openings_pt]
     plan = WallPlan(
         source=Source(file=os.path.basename(pdf_path), page=page, kind="vector",
@@ -106,15 +108,16 @@ def extract_vector(pdf_path: str, page: int = 1, max_side: int = 2048, min_walls
                     method=region.scale_method),
     )
     plan.notes = region.notes  # type: ignore[attr-defined]
+    plan.questions = list(getattr(region, "questions", []))
     return plan, rgb
 
 
 def extract(pdf_path: str, model_path: Optional[str], page: int = 1, max_side: int = 1024, size: int = 512,
-            prefer_vector: bool = True):
+            prefer_vector: bool = True, answers: Optional[dict] = None):
     plan = None
     rgb = None
     if prefer_vector:
-        res = extract_vector(pdf_path, page=page, max_side=max(max_side, 2048))
+        res = extract_vector(pdf_path, page=page, max_side=max(max_side, 2048), answers=answers)
         if res is not None:
             plan, rgb = res
     if plan is None:
@@ -137,8 +140,15 @@ def main(argv=None) -> int:
     ap.add_argument("--no-vector", action="store_true", help="always use the raster branch")
     ap.add_argument("--out", default=None)
     ap.add_argument("--overlay", default=None)
+    ap.add_argument("--answers", default=None,
+                    help='JSON with confirmed widths per frame code, e.g. {"P1": 0.70, "J1": 0.40}')
     args = ap.parse_args(argv)
-    plan, rgb = extract(args.pdf, args.model, args.page, args.max_side, args.size, prefer_vector=not args.no_vector)
+    answers = None
+    if args.answers and os.path.isfile(args.answers):
+        with open(args.answers, encoding="utf-8") as f:
+            answers = json.load(f)
+    plan, rgb = extract(args.pdf, args.model, args.page, args.max_side, args.size, prefer_vector=not args.no_vector,
+                        answers=answers)
     text = plan.to_json(indent=1)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
@@ -150,6 +160,8 @@ def main(argv=None) -> int:
     print(json.dumps({"kind": plan.source.kind, "walls": len(plan.walls), "openings": len(plan.openings),
                       "px_per_m": plan.scale.px_per_m, "notes": getattr(plan, "notes", None)}, ensure_ascii=False),
           file=sys.stderr)
+    for q in plan.questions:
+        print("DÚVIDA: " + q, file=sys.stderr)
     return 0
 
 

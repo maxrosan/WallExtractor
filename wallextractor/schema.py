@@ -44,6 +44,11 @@ class Opening:
     wall_id: Optional[str] = None
     polygon: Optional[List[Point]] = None
     confidence: float = 1.0  # 1.0 geometry + tag; 0.5 tag only (extent inferred)
+    code: Optional[str] = None  # frame code from the drawing, e.g. "P2" or "J1"
+    width_source: str = "geometry"  # "geometry" | "schedule" | "answer" | "default"
+    height_m: Optional[float] = None  # from the schedule (ALT.)
+    sill_m: Optional[float] = None  # from the schedule (PEIT.)
+    kind: Optional[str] = None  # GIRO, CORRER, BASCULANTE, ...
 
 
 @dataclass
@@ -76,6 +81,7 @@ class WallPlan:
     openings: List[Opening] = field(default_factory=list)
     scale: Scale = field(default_factory=Scale)
     version: str = SCHEMA_VERSION
+    questions: List[str] = field(default_factory=list)  # what a human should confirm (see answers file)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -94,6 +100,7 @@ class WallPlan:
             openings=[Opening(**o) for o in d.get("openings", [])],
             scale=Scale(**d.get("scale", {})),
             version=d.get("version", SCHEMA_VERSION),
+            questions=list(d.get("questions", [])),
         )
 
     @classmethod
