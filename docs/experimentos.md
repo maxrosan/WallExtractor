@@ -248,3 +248,46 @@ Próximos passos: (a) fechar os trechos curtos de parede nos cantos;
 (b) OCR ou reconhecimento dos glifos em contorno para ler quadros desenhados
 como paths; (c) coletar as respostas e montar `data/annotations/` (fora do
 repositório) como conjunto de teste.
+
+## V1: portas e janelas do ramo vetorial contra as correções do editor (2026-09-25)
+
+Gabarito: as 4 plantas brasileiras corrigidas no editor (28 portas, 27 janelas).
+As paredes da máquina não precisaram de nenhuma correção (138 de 138); todo o
+erro estava nas aberturas. Medida com `scripts/eval_openings.py`: acerto quando
+o tipo coincide e o centro e a largura ficam dentro da tolerância, com direção
+dentro de 20°.
+
+| | Portas certas | Portas erradas | Portas giradas | F1 portas | F1 janelas |
+|---|---|---|---|---|---|
+| Antes (tol. 15 cm) | 4 / 28 | 20 | 18 | 0,15 | 0,71 |
+| Depois (tol. 15 cm) | 19 / 28 | 5 | 2 | 0,73 | 0,71 |
+| Depois (tol. 25 cm) | 22 / 28 | 2 | 2 | 0,85 | 0,71 |
+
+A tolerância de 25 cm é a que vale para comparar: parte do gabarito foi feita
+com "Girar para a parede", que gira em torno da ponta da folha desenhada pela
+máquina (sobre o eixo da parede), e não da dobradiça real. Essas portas ficaram
+10 a 17 cm deslocadas no gabarito, e a nova extração cai no vão real.
+
+Causa: nas plantas brasileiras a porta costuma ficar ao lado de um canto, com o
+vão indo do fim de uma parede até a face da parede perpendicular. (1) O detector
+de folha aberta exigia a dobradiça sobre o trecho de parede e descartava essas
+portas; como não há parede alinhada do outro lado, também não havia "vão". (2) A
+folha aberta fica paralela à parede do canto, a 15-20 cm dela, e o detector de
+folha fechada a tomava por uma porta fechada naquela parede: a porta girada.
+
+Correção em `find_openings`: a folha aberta é detectada primeiro, com a
+dobradiça onde a folha encontra a face da parede (a linha da folha pode passar
+dela) e aceita além do fim da parede quando o vão encosta nesse fim; o arco
+bezier dá a outra ombreira; num arco em polilinha, o lado é o quarto de círculo
+com mais fatias de 10° preenchidas (antes, a contagem de peças era vencida por
+maçaneta e hachuras). Linhas usadas como folha aberta não entram mais no
+detector de folha fechada.
+
+Testado e descartado: (a) manter candidatos sem etiqueta com folha e arco em
+desenhos etiquetados: recuperaria 3 portas da Minha Casa Minha Vida, mas criou
+50+ falsos positivos (móveis e louças com arco); (b) aceitar caixilho de janela
+além do fim da parede (mesmo caso de canto, janelas J3 das duas Max Rosan):
+piorou janelas e portas porque os candidatos novos disputam as etiquetas.
+
+Ficam de fora: portas e janelas sem etiqueta (Minha Casa Minha Vida), janelas
+de canto (J3), janelas estreitas de 0,37-0,40 m e duas portas ainda giradas.

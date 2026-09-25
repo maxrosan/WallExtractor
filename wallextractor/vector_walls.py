@@ -672,6 +672,72 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
                    if abs(math.hypot((a[0] + b[0]) / 2 - hx, (a[1] + b[1]) / 2 - hy) - radius) <= 0.15 * radius)
 
     per_wall: Dict[int, List[Tuple[float, float, List[str]]]] = defaultdict(list)
+    open_leaf_segs: set = set()
+    for wi, w in enumerate(walls):
+        (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+        half = 0.75 * w.thickness + band_tol
+
+        def proj(p):
+            return (p[0] - ax) * ux + (p[1] - ay) * uy, (p[0] - ax) * nx + (p[1] - ay) * ny
+
+        # door leaves drawn open: a thin segment perpendicular to the wall, reaching the wall band, with a
+        # swing arc from its tip back to the wall line. The hinge is where the leaf meets the wall face (the
+        # leaf line may run on past it); the arc's end on the wall marks the other jamb. The hinge may lie
+        # past the wall's end when the opening runs from that end to a perpendicular wall (a door beside a
+        # corner): then the opening must touch the wall's end.
+        end_tol = max(0.2 * ppm, 1.5 * w.thickness)
+        for si, s in enumerate(thin_all):
+            if not (0.5 * ppm <= s.length <= 1.4 * ppm):
+                continue
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) > 0.12 * s.length:
+                continue
+            (ta, oa), (tb, ob) = proj(s.a), proj(s.b)
+            tip, o_tip, o_near = (s.b, ob, oa) if abs(ob) >= abs(oa) else (s.a, oa, ob)
+            sgn = 1.0 if o_tip > 0 else -1.0
+            if abs(o_near) > half and o_near * o_tip > 0:
+                continue  # the leaf does not reach the wall
+            o_h = o_near if (o_near * o_tip > 0 and abs(o_near) <= half) else sgn * min(half, w.thickness / 2)
+            th = (ta + tb) / 2
+            leaf = abs(o_tip - o_h)
+            if not (0.5 * ppm <= leaf <= 1.3 * ppm):
+                continue
+            on_wall = -0.1 * ppm <= th <= L + 0.1 * ppm
+            if not (on_wall or -leaf - end_tol <= th <= L + leaf + end_tol):
+                continue
+            far = None  # t of the other jamb
+            for a0, a1, _n, _path in arcs:
+                for p_tip, p_on in ((a0, a1), (a1, a0)):
+                    if math.hypot(p_tip[0] - tip[0], p_tip[1] - tip[1]) > 0.2 * leaf:
+                        continue
+                    t_on, o_on = proj(p_on)
+                    if abs(o_on) <= half + 0.15 * leaf and 0.75 * leaf <= abs(t_on - th) <= 1.25 * leaf:
+                        far = t_on
+                        break
+                if far is not None:
+                    break
+            if far is None:
+                # polyline or dashed swing: which quarter circle on the tip's side is drawn? Count the
+                # 10-degree slices holding a piece, so clutter at one spot (handle, hatching) cannot win.
+                hx, hy = ax + ux * th + nx * o_h, ay + uy * th + ny * o_h
+                bins = {1.0: set(), -1.0: set()}
+                for a, b in arc_pieces:
+                    mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+                    if abs(math.hypot(mx - hx, my - hy) - leaf) > 0.12 * leaf:
+                        continue
+                    dt, do = (mx - hx) * ux + (my - hy) * uy, ((mx - hx) * nx + (my - hy) * ny) * sgn
+                    if do < 0.05 * leaf or abs(dt) < 0.05 * leaf:
+                        continue  # behind the wall face, or on the leaf itself
+                    bins[1.0 if dt > 0 else -1.0].add(int(math.degrees(math.atan2(do, abs(dt))) // 10))
+                side = max(bins, key=lambda k: len(bins[k]))
+                if len(bins[side]) < 4 or len(bins[side]) <= len(bins[-side]):
+                    continue
+                far = th + side * leaf
+            lo, hi = sorted([th, far])
+            if not on_wall and not (-end_tol <= hi and lo <= L + end_tol and (abs(hi) <= end_tol or abs(lo - L) <= end_tol)):
+                continue  # past the end, but the opening does not start at the wall's end
+            per_wall[wi].append((lo, hi, ["leaf", "swing"]))
+            open_leaf_segs.add(si)
     for wi, w in enumerate(walls):
         (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
         half = 0.75 * w.thickness + band_tol
@@ -682,7 +748,9 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
         # door leaves drawn closed: a thin rectangle 0.6-1.3 m long lying parallel to the wall,
         # just outside its band (the leaf sits in the opening, the wall lines run behind it)
         leaf_lines = []
-        for s in thin_all:
+        for si, s in enumerate(thin_all):
+            if si in open_leaf_segs:
+                continue  # an open leaf lying beside a perpendicular wall is not a closed door
             if not (0.6 * ppm <= s.length <= 1.3 * ppm):
                 continue
             dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
@@ -713,40 +781,6 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
                     n_arc = max(on_circle(ax + ux * t_h, ay + uy * t_h, leaf) for t_h in (lo, hi))
                     per_wall[wi].append((lo, hi, ["leaf"] + (["swing"] if n_arc >= 3 else [])))
                     break
-        # door leaves drawn open: perpendicular thin segment hinged on the wall band, with a swing arc
-        for s in thin_all:
-            if not (0.55 * ppm <= s.length <= 1.3 * ppm):
-                continue
-            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
-            if abs(dx * ux + dy * uy) > 0.12 * s.length:
-                continue
-            for hinge, tip in ((s.a, s.b), (s.b, s.a)):
-                th, oh = proj(hinge)
-                if abs(oh) > half or not (-0.1 * ppm <= th <= L + 0.1 * ppm):
-                    continue
-                leaf = s.length
-                side = None
-                for a0, a1, _n, _path in arcs:
-                    for p_tip, p_on in ((a0, a1), (a1, a0)):
-                        if math.hypot(p_tip[0] - tip[0], p_tip[1] - tip[1]) > 0.2 * leaf:
-                            continue
-                        t_on, o_on = proj(p_on)
-                        if abs(o_on) <= half + 0.15 * leaf and abs(abs(t_on - th) - leaf) <= 0.25 * leaf:
-                            side = 1.0 if t_on > th else -1.0
-                            break
-                    if side is not None:
-                        break
-                if side is None and on_circle(hinge[0], hinge[1], leaf) >= 5:
-                    # dashed or polyline swing: pieces on the circle; the arc ends on the wall line
-                    plus = sum(1 for a, b in arc_pieces
-                               if abs(math.hypot((a[0] + b[0]) / 2 - hinge[0], (a[1] + b[1]) / 2 - hinge[1]) - leaf) <= 0.15 * leaf
-                               and proj(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))[0] > th)
-                    side = 1.0 if plus >= on_circle(hinge[0], hinge[1], leaf) / 2 else -1.0
-                if side is None:
-                    continue
-                lo, hi = sorted([th, th + side * leaf])
-                per_wall[wi].append((lo, hi, ["leaf", "swing"]))
-                break
         # window frames
         frames = []
         for s in mid_pen:
