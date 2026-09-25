@@ -70,7 +70,7 @@ paralela, abertura na mesma parede; não altera o que está copiado.
 | Ctrl+C / Ctrl+V | copiar a seleção / colar onde está o mouse |
 | Ctrl+D | duplicar ao lado |
 | botão direito | menu da parede ou abertura: girar no centro ou na ponta marcada (a mais próxima do clique), outro ângulo, girar para a parede, copiar, duplicar, colar, dividir, excluir; num ponto vazio, colar aqui |
-| Esc | cancelar desenho ou seleção |
+| Esc | cancelar desenho ou seleção e voltar a Selecionar |
 | roda do mouse | zoom (acima de 125% a planta é re-renderizada nítida do PDF) |
 
 ## Rodar local

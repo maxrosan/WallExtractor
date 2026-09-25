@@ -463,7 +463,7 @@ document.addEventListener("keydown", e => {
   }
   if (k === "v") setTool("select"); else if (k === "w") setTool("wall"); else if (k === "d") setTool("door"); else if (k === "j") setTool("window"); else if (k === "c") setTool("calib");
   else if (k === "r" && S.sel) { rotateSel(e.shiftKey ? -90 : 90); closeCtx(); }
-  else if (k === "escape") { closeCtx(); S.draw = null; S.calib = null; clearPreview(); showSnap(null); $("#calib-box").hidden = true; select(null); }
+  else if (k === "escape") { closeCtx(); $("#calib-box").hidden = true; select(null); setTool("select"); } // setTool also cancels any drawing in progress
   else if (k === "delete" || k === "backspace") { deleteSel(); e.preventDefault(); }
   else if ((k === "[" || k === "]") && S.sel && S.sel.kind === "wall") { const w = wallById(S.sel.id); const m = ppm() || 100; pushUndo(); w.thickness = Math.max(2, w.thickness + (k === "]" ? 1 : -1) * 0.01 * m); changed(); }
 });
