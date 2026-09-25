@@ -44,6 +44,16 @@ Ao girar uma abertura, ela é encaixada na parede alinhada mais próxima; se nã
 houver nenhuma, fica solta (sem `wall_id`). Ao girar uma parede, as aberturas
 dela giram junto.
 
+## Copiar e colar
+
+Ctrl+C copia a parede, porta ou janela selecionada; Ctrl+V cola centrada onde
+está o mouse (ou use "Colar aqui" no botão direito). Porta e janela coladas
+sobre uma parede, inclusive no vão entre duas paredes alinhadas, entram
+alinhadas a ela, com o mesmo código e largura; fora de parede ficam soltas.
+A cópia guarda a escala de origem, então uma janela copiada de uma planta
+cola com a mesma medida em metros em outra. Ctrl+D duplica ao lado: parede
+paralela, abertura na mesma parede; não altera o que está copiado.
+
 ## Atalhos
 
 | Tecla | Ação |
@@ -53,7 +63,9 @@ dela giram junto.
 | Ctrl+Z / Ctrl+Y | desfazer / refazer |
 | [ / ] | espessura da parede selecionada −1 / +1 cm |
 | R / Shift+R | girar a seleção 90° no sentido horário / anti-horário, em torno do centro |
-| botão direito | menu da parede ou abertura: girar no centro ou na ponta marcada (a mais próxima do clique), outro ângulo, girar para a parede, dividir, excluir |
+| Ctrl+C / Ctrl+V | copiar a seleção / colar onde está o mouse |
+| Ctrl+D | duplicar ao lado |
+| botão direito | menu da parede ou abertura: girar no centro ou na ponta marcada (a mais próxima do clique), outro ângulo, girar para a parede, copiar, duplicar, colar, dividir, excluir; num ponto vazio, colar aqui |
 | Esc | cancelar desenho ou seleção |
 | roda do mouse | zoom (acima de 125% a planta é re-renderizada nítida do PDF) |
 

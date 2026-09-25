@@ -10,7 +10,7 @@ const S = {
   token: localStorage.getItem("we_token") || "",
   filter: "pending", plans: [], pid: null, row: null, plan: null, prims: [],
   tool: "select", sel: null, undo: [], redo: [], dirty: false, saveTimer: null,
-  draw: null, calib: null, grid: null, showPrims: false, snap: true,
+  draw: null, calib: null, grid: null, showPrims: false, snap: true, clip: null,
 };
 const COLORS = { wall: "rgba(192,57,43,0.55)", wallSel: "rgba(192,57,43,0.85)", door: "rgba(46,139,87,0.8)", window: "rgba(59,111,217,0.8)",
   handle: "#2457A6", snap: "#B7791F", prim: "rgba(36,87,166,0.35)", prim0: "rgba(36,87,166,0.18)" };
@@ -290,17 +290,66 @@ function rotateToWall(prefer) {
 }
 function selItem() { return S.sel && (S.sel.kind === "wall" ? wallById(S.sel.id) : S.plan.openings.find(o => o.id === S.sel.id)); }
 
-// context menu (right click on a wall or opening)
-const ctx = $("#ctx"); let ctxEnd = "start", ctxMark = null;
+// copy / paste. The clipboard keeps the item and the scale it was copied at, so a door copied from one
+// plan pastes with the same size in metres into another.
+function copySel() {
+  const item = selItem(); if (!item) return;
+  S.clip = { kind: S.sel.kind, item: JSON.parse(JSON.stringify(item)), ppm: ppm() };
+  hint(`${S.sel.kind === "wall" ? "Parede" : item.type === "door" ? "Porta" : "Janela"} copiada. Ctrl+V cola onde está o mouse.`);
+}
+// the wall to paste an opening on: the pointer on its line, inside it or in a gap past its end
+function wallAt(p, half) {
+  const tol = 12 / stage.scaleX(); let best = null;
+  for (const w of S.plan.walls) { const band = Math.max(tol, w.thickness); const d = perpDist(w, p); if (d > band) continue;
+    const t = proj(w, p), apart = Math.max(0, t - axis(w).L, -t); if (apart > half + band) continue;
+    if (!best || d + apart < best.d + best.apart) best = { w, d, apart, t }; }
+  return best;
+}
+function paste(p) {
+  if (!S.clip || !S.plan) return; p = p || viewCenter();
+  const src = S.clip.item; const f = S.clip.ppm && ppm() ? ppm() / S.clip.ppm : 1;
+  const L = dist(src.start, src.end) * f, ux = (src.end[0] - src.start[0]) / (dist(src.start, src.end) || 1), uy = (src.end[1] - src.start[1]) / (dist(src.start, src.end) || 1);
+  pushUndo();
+  if (S.clip.kind === "wall") {
+    const w = { ...src, id: nextId("w", S.plan.walls), start: [p[0] - ux * L / 2, p[1] - uy * L / 2], end: [p[0] + ux * L / 2, p[1] + uy * L / 2], thickness: src.thickness * f, polygon: null };
+    S.plan.walls.push(w); S.sel = { kind: "wall", id: w.id };
+  } else {
+    const o = { ...src, id: nextId("o", S.plan.openings), width: L, polygon: null, width_source: src.width_source || "editor" };
+    const hit = wallAt(p, L / 2);
+    if (hit) { o.wall_id = hit.w.id; o.start = atT(hit.w, hit.t - L / 2); o.end = atT(hit.w, hit.t + L / 2); hint("Colada na parede sob o mouse."); }
+    else { o.wall_id = null; o.start = [p[0] - ux * L / 2, p[1] - uy * L / 2]; o.end = [p[0] + ux * L / 2, p[1] + uy * L / 2]; hint("Colada solta: nenhuma parede sob o mouse. Arraste ou cole sobre uma parede."); }
+    S.plan.openings.push(o); S.sel = { kind: "opening", id: o.id };
+  }
+  changed();
+}
+// a wall is duplicated beside itself; an opening next to itself on the same wall
+function duplicateSel() {
+  const it = selItem(); if (!it) return; const keep = S.clip; copySel();
+  const L = dist(it.start, it.end), g = 20 / stage.scaleX(); const mid = [(it.start[0] + it.end[0]) / 2, (it.start[1] + it.end[1]) / 2];
+  const ux = (it.end[0] - it.start[0]) / (L || 1), uy = (it.end[1] - it.start[1]) / (L || 1);
+  paste(S.sel.kind === "wall" ? [mid[0] - uy * (it.thickness + g), mid[1] + ux * (it.thickness + g)] : [mid[0] + ux * (L + g), mid[1] + uy * (L + g)]);
+  S.clip = keep; hint("Duplicado.");
+}
+function viewCenter() { const k = stage.scaleX(); return [(stage.width() / 2 - stage.x()) / k, (stage.height() / 2 - stage.y()) / k]; }
+function pointerInView() { const p = stage.getPointerPosition(); return p && p.x >= 0 && p.y >= 0 && p.x <= stage.width() && p.y <= stage.height() ? worldPointer() : null; }
+
+// context menu (right click on a wall or opening, or on an empty spot to paste)
+const ctx = $("#ctx"); let ctxEnd = "start", ctxMark = null, ctxAt = null;
 function closeCtx() { ctx.hidden = true; if (ctxMark) { ctxMark.destroy(); ctxMark = null; uiLayer.batchDraw(); } }
 stage.on("contextmenu", e => {
-  e.evt.preventDefault(); closeCtx();
-  const id = e.target && e.target.id && e.target.id(); if (!S.plan || !id || !/^[wo]:/.test(id)) return;
-  select(id[0] === "w" ? "wall" : "opening", id.slice(2)); const item = selItem(); const p = worldPointer(); if (!item || !p) return;
-  ctxEnd = dist(p, item.start) <= dist(p, item.end) ? "start" : "end";
-  const k = stage.scaleX(); ctxMark = new Konva.Circle({ x: item[ctxEnd][0], y: item[ctxEnd][1], radius: 8 / k, stroke: COLORS.snap, strokeWidth: 3 / k, listening: false });
-  uiLayer.add(ctxMark); uiLayer.batchDraw();
-  $$("[data-only]", ctx).forEach(el => { el.hidden = el.dataset.only !== S.sel.kind; });
+  e.evt.preventDefault(); closeCtx(); if (!S.plan) return;
+  const id = e.target && e.target.id && e.target.id(); const onItem = !!id && /^[wo]:/.test(id); ctxAt = worldPointer();
+  let mode = "empty";
+  if (onItem) {
+    select(id[0] === "w" ? "wall" : "opening", id.slice(2)); const item = selItem(); const p = ctxAt; if (!item || !p) return; mode = S.sel.kind;
+    ctxEnd = dist(p, item.start) <= dist(p, item.end) ? "start" : "end";
+    const k = stage.scaleX(); ctxMark = new Konva.Circle({ x: item[ctxEnd][0], y: item[ctxEnd][1], radius: 8 / k, stroke: COLORS.snap, strokeWidth: 3 / k, listening: false });
+    uiLayer.add(ctxMark); uiLayer.batchDraw();
+  } else if (!S.clip) return;
+  // data-only lists the modes an entry shows in; entries without it show on walls and openings
+  $$("#ctx > *").forEach(el => { const only = el.dataset.only ? el.dataset.only.split(" ") : ["wall", "opening"]; el.hidden = !only.includes(mode); });
+  const pb = $("#ctx [data-act=paste]"); pb.hidden = !S.clip;
+  if (S.clip) pb.firstChild.textContent = "Colar aqui (" + (S.clip.kind === "wall" ? "parede" : (S.clip.item.code || (S.clip.item.type === "door" ? "porta" : "janela"))) + ") ";
   const wrap = $("#stage-wrap").getBoundingClientRect(); ctx.hidden = false;
   ctx.style.left = Math.min(e.evt.clientX - wrap.left, wrap.width - ctx.offsetWidth - 4) + "px";
   ctx.style.top = Math.min(e.evt.clientY - wrap.top, wrap.height - ctx.offsetHeight - 4) + "px";
@@ -308,6 +357,9 @@ stage.on("contextmenu", e => {
 ctx.addEventListener("contextmenu", e => e.preventDefault());
 ctx.addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return; const end = ctxEnd; closeCtx();
+  if (b.dataset.act === "copy") return copySel();
+  if (b.dataset.act === "dup") return duplicateSel();
+  if (b.dataset.act === "paste") return paste(ctxAt);
   if (b.dataset.act === "del") return deleteSel();
   if (b.dataset.act === "split") return splitSel();
   if (b.dataset.rot === "fit") return rotateToWall(end);
@@ -379,7 +431,7 @@ $("#calib-ok").addEventListener("click", () => {
 function setTool(t) { S.tool = t; S.draw = null; S.calib = null; clearPreview(); showSnap(null); stage.draggable(true);
   $$("#toolbar .tool").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
   $("#stage").style.cursor = t === "select" ? "default" : "crosshair";
-  hint({ select: "Clique para selecionar, arraste para mover. Pontas: redimensionar. Botão direito: girar. Roda do mouse: zoom.", wall: "Clique no início e no fim da parede. Encaixa nas linhas do PDF e em 0/90°.",
+  hint({ select: "Clique para selecionar, arraste para mover. Pontas: redimensionar. Botão direito: girar, copiar. Ctrl+C / Ctrl+V: copiar e colar no mouse. Roda do mouse: zoom.", wall: "Clique no início e no fim da parede. Encaixa nas linhas do PDF e em 0/90°.",
     door: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.", window: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.",
     calib: "Clique em dois pontos com distância conhecida e informe a medida." }[t]); render(); }
 $$("#toolbar .tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
@@ -389,13 +441,20 @@ $("#snap").addEventListener("change", e => { S.snap = e.target.checked; });
 document.addEventListener("keydown", e => {
   if (e.target.matches("input, select, textarea")) return;
   const k = e.key.toLowerCase();
+  if (e.ctrlKey || e.metaKey) { // Ctrl combos first, so Ctrl+C / Ctrl+V / Ctrl+D do not switch tools
+    if (k === "c") copySel();
+    else if (k === "v") paste(pointerInView());
+    else if (k === "d") duplicateSel();
+    else if (k === "z") e.shiftKey ? redo() : undo();
+    else if (k === "y") redo();
+    else if (k === "s") save();
+    else return;
+    e.preventDefault(); return;
+  }
   if (k === "v") setTool("select"); else if (k === "w") setTool("wall"); else if (k === "d") setTool("door"); else if (k === "j") setTool("window"); else if (k === "c") setTool("calib");
-  else if (k === "r" && !e.ctrlKey && !e.metaKey && S.sel) { rotateSel(e.shiftKey ? -90 : 90); closeCtx(); }
+  else if (k === "r" && S.sel) { rotateSel(e.shiftKey ? -90 : 90); closeCtx(); }
   else if (k === "escape") { closeCtx(); S.draw = null; S.calib = null; clearPreview(); showSnap(null); $("#calib-box").hidden = true; select(null); }
   else if (k === "delete" || k === "backspace") { deleteSel(); e.preventDefault(); }
-  else if ((e.ctrlKey || e.metaKey) && k === "z") { e.shiftKey ? redo() : undo(); e.preventDefault(); }
-  else if ((e.ctrlKey || e.metaKey) && k === "y") { redo(); e.preventDefault(); }
-  else if ((e.ctrlKey || e.metaKey) && k === "s") { save(); e.preventDefault(); }
   else if ((k === "[" || k === "]") && S.sel && S.sel.kind === "wall") { const w = wallById(S.sel.id); const m = ppm() || 100; pushUndo(); w.thickness = Math.max(2, w.thickness + (k === "]" ? 1 : -1) * 0.01 * m); changed(); }
 });
 
