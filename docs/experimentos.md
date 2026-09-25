@@ -291,3 +291,47 @@ piorou janelas e portas porque os candidatos novos disputam as etiquetas.
 
 Ficam de fora: portas e janelas sem etiqueta (Minha Casa Minha Vida), janelas
 de canto (J3), janelas estreitas de 0,37-0,40 m e duas portas ainda giradas.
+
+## V2: aberturas fora de parede e janelas no vão (2026-09-25)
+
+Gabarito ampliado: as 4 plantas brasileiras de escritório mais 7 plantas
+populares da Prefeitura de São José dos Campos (m01, m04, m06-c, m09, m12,
+m13-a, m15-b, de `docs/datasets.md`), corrigidas no editor. 74 portas e 62
+janelas. As paredes seguem sem nenhuma correção nas 11 plantas.
+
+| tol. 25 cm | Portas certas | Portas erradas | Giradas | F1 portas | Janelas certas | Janelas erradas | F1 janelas |
+|---|---|---|---|---|---|---|---|
+| V1 | 57 / 74 | 33 | 10 | 0,70 | 18 / 62 | 6 | 0,42 |
+| V2 | 67 / 74 | 27 | 2 | 0,80 | 45 / 62 | 11 | 0,76 |
+
+Nas 4 plantas de escritório a V2 mantém as portas (22 / 28, 2 erradas) e
+perde 2 janelas (18 → 16): um candidato novo de caixilho sem parede toma a
+etiqueta J2 de banheiro num ponto 25 cm fora do centro marcado.
+
+O desenho de SJC é de outro tipo: sem etiquetas P/J, sem quadro de
+esquadrias, e o extrator interrompe a parede em cada abertura. Três
+convenções novas em `find_openings`:
+
+1. **Janela no vão.** Quatro linhas de pena média, paralelas e dentro da
+   faixa da parede, com pontas coincidentes, no vão entre duas paredes
+   alinhadas. Antes, o caixilho só contava sobre um trecho de parede.
+2. **Porta atravessando o fim de uma parede.** A folha desenhada ao lado da
+   parede, com a dobradiça no fim dela, e o arco da folha até a outra
+   ombreira, na perpendicular ao fim da parede: é a porta entre duas paredes
+   paralelas, sem parede desenhada ao longo do vão. Sai com `wall_id`
+   vazio (o editor a alinha a uma parede se houver).
+3. **Janela numa linha sem parede.** Três ou mais linhas paralelas dentro
+   de uma espessura de parede, com pontas coincidentes e as duas pontas
+   encostando em parede: o trecho inteiro entre duas paredes é abertura.
+
+Também: caixilho de 3+ linhas ao lado de uma folha fica como janela
+separada, em vez de se fundir à porta; e folha com arco vence duas linhas
+no vão (porta desenhada fechada) quando descrevem a mesma abertura.
+
+Testado e descartado: rejeitar folhas com duas ou mais "gêmeas" paralelas de
+mesmo comprimento (piso cerâmico desenhado com a mesma pena da folha): tirou
+3 portas falsas e 6 verdadeiras.
+
+Ficam de fora: nas plantas de SJC, folhas falsas em armários e louças (os
+27 erros de porta são quase todos aí); janelas estreitas de 0,37-0,40 m;
+janelas de canto (J3) e aberturas sem etiqueta nas plantas de escritório.

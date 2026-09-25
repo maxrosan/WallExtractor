@@ -160,6 +160,18 @@ de produção com ResPlan + MSD + dados próprios.
   "floor-wall-segmentation" (m10, 985 imagens).
 - Busca: https://universe.roboflow.com/search?q=class%3Afloorplan
 
+## Plantas brasileiras públicas em PDF vetorial (2026-09-25)
+
+Não há dataset anotado, mas há PDFs vetoriais públicos que servem de teste
+para o ramo vetorial e, corrigidos no editor, de gabarito:
+
+| Fonte | O que tem | Estado |
+|---|---|---|
+| Prefeitura de São José dos Campos, Planta Popular (`sjc.sp.gov.br/servicos/habitacao-e-regularizacao-fundiaria/habitacao/planta-popular/`) | 36 modelos de casa de 43 a 100 m²; 29 vetoriais (m01 a m15-b), 13 do "portfólio" escaneados | 7 corrigidos no editor (V2 em `experimentos.md`). Sem etiquetas P/J nem quadro; janela = 4 linhas vermelhas no vão com anotação "L×A / peitoril" |
+| Cadernos CAIXA, casa popular 42 m² (`caixa.gov.br/Downloads/banco-projetos-projetos-HIS/`) | 42 páginas A4, pranchas vetoriais pequenas | Extrai paredes, sem escala (sem rótulo nem cotas legíveis); bloqueia download por script |
+| FNDE Proinfância (creches Tipo 1, 2, B, MEI) | 41 pranchas por tipo em PDF, DWG e IFC, de BIM, com quadro de esquadrias | Paredes hachuradas, não em pena grossa: o pareamento não acha paredes. Precisa de outro detector |
+| Bauru (143 PDFs de núcleos habitacionais), AGEHAB-MS, COHAB-MG | Casas populares | Escaneados (só ramo raster) |
+
 ## Próximos passos propostos
 
 1. Baixar CubiCasa5K e ResPlan; escrever o conversor SVG/pickle → JSON com o

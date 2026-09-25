@@ -673,12 +673,47 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
 
     per_wall: Dict[int, List[Tuple[float, float, List[str]]]] = defaultdict(list)
     open_leaf_segs: set = set()
+    free_cands = []  # (start, end, cues): openings on a line no wall runs along
     for wi, w in enumerate(walls):
         (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
         half = 0.75 * w.thickness + band_tol
 
         def proj(p):
             return (p[0] - ax) * ux + (p[1] - ay) * uy, (p[0] - ax) * nx + (p[1] - ay) * ny
+
+        # door across the end of a wall: the leaf lies alongside the wall, hinged at its end, and the
+        # swing arc goes from the leaf's tip to the other jamb, on the line perpendicular to the wall
+        # through its end (a doorway between two parallel walls, with no wall drawn along it)
+        end_tol = max(0.2 * ppm, 1.5 * w.thickness)
+        for si, s in enumerate(thin_all):
+            if not (0.5 * ppm <= s.length <= 1.3 * ppm):
+                continue
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * s.length:
+                continue
+            (ta, oa), (tb, ob) = proj(s.a), proj(s.b)
+            off = (oa + ob) / 2
+            if not (half < abs(off) <= 0.45 * ppm):
+                continue
+            for hinge, tip, th in ((s.a, s.b, ta), (s.b, s.a, tb)):
+                t_end = 0.0 if abs(th) <= end_tol else L if abs(th - L) <= end_tol else None
+                if t_end is None:
+                    continue
+                leaf = s.length
+                for a0, a1, _n, _path in arcs:
+                    for p_tip, p_on in ((a0, a1), (a1, a0)):
+                        if math.hypot(p_tip[0] - tip[0], p_tip[1] - tip[1]) > 0.2 * leaf:
+                            continue
+                        t_on, o_on = proj(p_on)
+                        if abs(t_on - t_end) > 0.2 * leaf or o_on * off < 0 or not (0.75 * leaf <= abs(o_on) <= 1.3 * leaf):
+                            continue
+                        end_pt = (ax + ux * t_end, ay + uy * t_end)
+                        free_cands.append((end_pt, p_on, ["leaf", "swing", "free"]))
+                        open_leaf_segs.add(si)
+                        break
+                    else:
+                        continue
+                    break
 
         # door leaves drawn open: a thin segment perpendicular to the wall, reaching the wall band, with a
         # swing arc from its tip back to the wall line. The hinge is where the leaf meets the wall face (the
@@ -806,6 +841,50 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             if consistent >= 2:
                 per_wall[wi].append((max(lo, 0.0), min(hi, L), ["frame"] * consistent))
 
+    # window on a line with no wall along it (the whole stretch between two walls is openings): three or
+    # more parallel mid-pen lines within a wall's thickness of each other, with matching ends, both ends
+    # touching a wall
+    thick_med = sorted(w.thickness for w in walls)[len(walls) // 2] if walls else 3 * pen
+    end_tol_g = max(0.2 * ppm, 1.5 * thick_med)
+
+    def touches_wall(p):
+        for w in walls:
+            (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+            t = (p[0] - ax) * ux + (p[1] - ay) * uy
+            o = (p[0] - ax) * nx + (p[1] - ay) * ny
+            if -end_tol_g <= t <= L + end_tol_g and abs(o) <= 0.75 * w.thickness + end_tol_g:
+                return True
+        return False
+
+    used_frame = set()
+    for i, s in enumerate(mid_pen):
+        if i in used_frame or not (w_min <= s.length <= w_max):
+            continue
+        dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+        ux, uy = dx / s.length, dy / s.length
+        nx, ny = -uy, ux
+        group = [i]
+        for j, t in enumerate(mid_pen):
+            if j == i or j in used_frame or abs((t.b[0] - t.a[0]) * ux + (t.b[1] - t.a[1]) * uy) < 0.985 * t.length:
+                continue
+            o = ((t.a[0] + t.b[0]) / 2 - s.a[0]) * nx + ((t.a[1] + t.b[1]) / 2 - s.a[1]) * ny
+            if abs(o) > 1.2 * thick_med:
+                continue
+            pa = (t.a[0] - s.a[0]) * ux + (t.a[1] - s.a[1]) * uy
+            pb = (t.b[0] - s.a[0]) * ux + (t.b[1] - s.a[1]) * uy
+            lo, hi = min(pa, pb), max(pa, pb)
+            if abs(lo) <= 0.12 * s.length and abs(hi - s.length) <= 0.12 * s.length:
+                group.append(j)
+        if len(group) < 3:
+            continue
+        used_frame.update(group)
+        offs = [((mid_pen[j].a[0] + mid_pen[j].b[0]) / 2 - s.a[0]) * nx + ((mid_pen[j].a[1] + mid_pen[j].b[1]) / 2 - s.a[1]) * ny for j in group]
+        o_mid = sum(offs) / len(offs)
+        start = (s.a[0] + nx * o_mid, s.a[1] + ny * o_mid)
+        end = (s.b[0] + nx * o_mid, s.b[1] + ny * o_mid)
+        if touches_wall(start) and touches_wall(end):
+            free_cands.append((start, end, ["frame"] * len(group) + ["free"]))
+
     wall_index = {w.id: i for i, w in enumerate(walls)}
     seen_gaps = set()
     for gs, ge, width, wid_l, wid_r, thick in _wall_gaps(walls, (w_min, w_max)):
@@ -814,10 +893,34 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             continue
         seen_gaps.add(key)
         wi = wall_index[wid_l]
-        (ax, ay), (ux, uy), _n, L = _wall_frame(walls[wi])
+        (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(walls[wi])
         t0 = (gs[0] - ax) * ux + (gs[1] - ay) * uy
         t1 = (ge[0] - ax) * ux + (ge[1] - ay) * uy
-        per_wall[wi].append((min(t0, t1), max(t0, t1), ["gap"]))
+        g0, g1 = min(t0, t1), max(t0, t1)
+        per_wall[wi].append((g0, g1, ["gap"]))
+        # window drawn in the gap: mid-pen lines along the wall line, inside its band, with matching ends
+        # (the wall pairing stops at the window, so the frame lines lie past the wall's end, in the gap)
+        half = 0.75 * walls[wi].thickness + band_tol
+        frames = []
+        for sg in mid_pen:
+            dx, dy = sg.b[0] - sg.a[0], sg.b[1] - sg.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * sg.length:
+                continue
+            oa = (sg.a[0] - ax) * nx + (sg.a[1] - ay) * ny
+            ob = (sg.b[0] - ax) * nx + (sg.b[1] - ay) * ny
+            if max(abs(oa), abs(ob)) > half:
+                continue
+            lo, hi = sorted(((sg.a[0] - ax) * ux + (sg.a[1] - ay) * uy, (sg.b[0] - ax) * ux + (sg.b[1] - ay) * uy))
+            if lo < g0 - 0.1 * ppm or hi > g1 + 0.1 * ppm:
+                continue
+            frames.append((lo, hi, [(lo, hi)]))
+        for lo, hi, spans in _merge_intervals(frames, gap=0.15 * ppm):
+            fw = hi - lo
+            if not (w_min <= fw <= w_max):
+                continue
+            consistent = sum(1 for fa, fb in spans if abs(fa - lo) <= 0.12 * fw and abs(fb - hi) <= 0.12 * fw)
+            if consistent >= 2:
+                per_wall[wi].append((lo, hi, ["frame"] * consistent))
 
     cands = []
     for wi, items in per_wall.items():
@@ -828,7 +931,10 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
         merged = []  # (lo, hi, cues, parts)
         for lo, hi, cues in sorted(primary, key=lambda z: z[0]):
             part = (lo, hi, cues[0])
-            if merged and lo < merged[-1][1] - 0.05 * ppm and not ("leaf" in cues and "leaf" in merged[-1][2]):
+            # a clear window frame (3+ lines) next to a leaf stays a separate opening (window beside a door)
+            clear_frame = cues.count("frame") >= 3 or merged and merged[-1][2].count("frame") >= 3
+            other_leaf = "leaf" in cues or merged and "leaf" in merged[-1][2]
+            if merged and lo < merged[-1][1] - 0.05 * ppm and not ("leaf" in cues and "leaf" in merged[-1][2]) and not (clear_frame and other_leaf and not ("leaf" in cues and "leaf" in merged[-1][2])):
                 m0, m1, mc, parts = merged[-1]
                 # a leaf defines the door width: frames/gaps attach to it without widening it
                 if "leaf" in mc and "leaf" not in cues:
@@ -858,6 +964,13 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
                       walls[wi].start[1] + _wall_frame(walls[wi])[1][1] * hi),
               "width": hi - lo, "cues": Counter(cues), "tag": None, "parts": parts}
              for wi, lo, hi, cues, parts in cands]
+    for start, end, cues in free_cands:
+        cx, cy = (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
+        if any(math.hypot((c["start"][0] + c["end"][0]) / 2 - cx, (c["start"][1] + c["end"][1]) / 2 - cy) <= 0.3 * ppm
+               and not (c["cues"]["leaf"] and "frame" in cues) for c in cands):
+            continue  # a wall already carries this opening
+        cands.append({"wall": None, "start": start, "end": end, "width": math.hypot(end[0] - start[0], end[1] - start[1]),
+                      "cues": Counter(cues), "tag": None, "parts": []})
 
     # Tag -> candidate assignment. Cost = distance plus penalties when the candidate's cues do not
     # fit the tag type (a "P" tag wants a door leaf, a "J" tag wants frame lines or a wall gap).
@@ -869,7 +982,7 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             if d > max(1.2 * ppm, 1.0 * c["width"]):
                 continue
             cues = c["cues"]
-            cost = d
+            cost = d + (0.3 * ppm if cues["free"] else 0)  # an opening on a wall beats one on a bare line
             if ttype == "door":
                 cost += 0 if cues["leaf"] else 0.6 * ppm
                 cost += 0 if cues["swing"] else 0.3 * ppm  # a leaf with its swing arc beats a bare rectangle
@@ -940,7 +1053,9 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             otype = "window"
         else:
             continue
-        score = (1 if c["tag"] else 0, sum(cues.values()))
+        # a leaf with its swing arc is direct evidence of a door; two lines in a gap may be a door drawn
+        # closed as well as a window, so the arc wins when both describe the same opening
+        score = (1 if c["tag"] else 0, 1 if (cues["leaf"] and cues["swing"]) else 0, sum(cues.values()))
         typed.append((score, otype, c))
     # the same physical opening can be seen from two overlapping walls: keep the best-supported one
     typed.sort(key=lambda z: z[0], reverse=True)
@@ -951,7 +1066,7 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
                for o in openings):
             continue
         openings.append(Opening(id=f"o{len(openings) + 1}", type=otype, start=c["start"], end=c["end"],
-                                width=c["width"], wall_id=walls[c["wall"]].id,
+                                width=c["width"], wall_id=walls[c["wall"]].id if c["wall"] is not None else None,
                                 confidence=0.5 if c["cues"]["tag_only"] else 1.0, code=c.get("code"),
                                 width_source="default" if c["cues"]["tag_only"] and c["width"] < 0 else "geometry"))
     apply_schedule(page, openings, region, tags, ppm, answers=answers)
