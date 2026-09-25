@@ -187,6 +187,7 @@ esse passo entrar: a imagem é o input e o JSON é o alvo.
 | `PUT /api/plans/{id}/annotation` | salva a correção (JSON WallPlan) |
 | `POST /api/plans/{id}/status` `{"status": "corrected"}` | pendente / corrigida / pulada |
 | `GET /api/plans/{id}/image` | render base (2000 px) |
+| `GET /api/plans/{id}/pdf` | PDF original (para rodar o extrator offline contra as correções) |
 | `GET /api/plans/{id}/tile?x&y&w&h&s` | recorte re-renderizado do PDF para zoom |
 | `GET /api/export?status=corrected` | zip de pares de treino |
 

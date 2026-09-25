@@ -167,6 +167,15 @@ def base_image(pid: str):
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
+@app.get("/api/plans/{pid}/pdf", dependencies=[Depends(auth)])
+def source_pdf(pid: str):
+    """The uploaded PDF, to re-run the extractor offline against the corrections."""
+    row = store.get(pid)
+    if row is None or not os.path.isfile(store.pdf_path(pid)):
+        raise HTTPException(404)
+    return FileResponse(store.pdf_path(pid), media_type="application/pdf", filename=row.get("file") or f"{pid}.pdf")
+
+
 @app.get("/api/plans/{pid}/tile", dependencies=[Depends(auth)])
 def tile(pid: str, x: float, y: float, w: float, h: float, s: float = 2.0):
     """Re-render a window of the plan (base-image pixels) at ``s`` times the base resolution."""
