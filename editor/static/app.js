@@ -383,8 +383,13 @@ stage.on("mousedown touchstart", e => {
     return;
   }
   if (S.tool === "door" || S.tool === "window") {
-    const hit = nearestWall(p, 12 / stage.scaleX()); if (!hit) { hint("Arraste sobre uma parede para criar a abertura."); return; }
-    stage.draggable(false); S.draw = { wall: hit.w, t0: hit.t, t1: hit.t, type: S.tool }; return;
+    stage.draggable(false);
+    const hit = nearestWall(p, 12 / stage.scaleX());
+    // on a wall: slide along its axis (past its ends too, into the gap the extractor left for the opening);
+    // off any wall: free segment between two points, snapped to wall ends and PDF lines, attached on release
+    if (hit) { const sn = snapPoint(p, { tol: 7 }); const t0 = sn.kind ? proj(hit.w, sn.pt) : hit.t; showSnap(sn); S.draw = { wall: hit.w, t0, t1: t0, type: S.tool }; }
+    else { const sn = snapPoint(p); showSnap(sn); S.draw = { p1: sn.pt, p2: sn.pt, type: S.tool }; }
+    return;
   }
   if (S.tool === "calib") {
     if (!S.calib) S.calib = { p1: p }; else { S.calib.p2 = p; $("#calib-box").hidden = false; $("#calib-dist").focus(); showMeasure(`${dist(S.calib.p1, p).toFixed(0)} px marcados`); }
@@ -395,22 +400,27 @@ stage.on("mousemove touchmove", () => {
   const k = stage.scaleX();
   if (S.tool === "wall" && S.draw.p1) { const sn = snapPoint(p, { anchor: S.draw.p1 }); showSnap(sn); preview([...S.draw.p1, ...sn.pt], medianThickness(), COLORS.wall); showMeasure(fmtM(dist(S.draw.p1, sn.pt))); }
   else if ((S.tool === "door" || S.tool === "window") && S.draw.wall) {
-    const w = S.draw.wall; let t = Math.max(0, Math.min(axis(w).L, proj(w, p)));
+    const w = S.draw.wall; let t = proj(w, p);
     // snap the opening length to the schedule widths and to primitive endpoints
     const m = ppm(); if (m) { for (const wd of codeWidths(S.draw.type)) { const tt = S.draw.t0 + Math.sign(t - S.draw.t0) * wd * m; if (Math.abs(tt - t) < 6 / k) t = tt; } }
-    const sn = snapPoint(atT(w, t), { tol: 7 }); if (sn.kind) { t = Math.max(0, Math.min(axis(w).L, proj(w, sn.pt))); showSnap(sn); } else showSnap(null);
+    const sn = snapPoint(atT(w, t), { tol: 7 }); if (sn.kind) { t = proj(w, sn.pt); showSnap(sn); } else showSnap(null);
     S.draw.t1 = t; preview([...atT(w, S.draw.t0), ...atT(w, t)], w.thickness + 6 / k, COLORS[S.draw.type]); showMeasure(`${S.draw.type === "door" ? "porta" : "janela"} ${fmtM(Math.abs(t - S.draw.t0))}`);
+  }
+  else if ((S.tool === "door" || S.tool === "window") && S.draw.p1) {
+    const sn = snapPoint(p, { anchor: S.draw.p1 }); showSnap(sn); S.draw.p2 = sn.pt;
+    preview([...S.draw.p1, ...sn.pt], medianThickness() + 6 / k, COLORS[S.draw.type]); showMeasure(`${S.draw.type === "door" ? "porta" : "janela"} ${fmtM(dist(S.draw.p1, sn.pt))}`);
   }
 });
 stage.on("mouseup touchend", () => {
   if (!S.draw || !(S.tool === "door" || S.tool === "window")) return;
   const d = S.draw; S.draw = null; stage.draggable(true); clearPreview(); showSnap(null);
-  const len = Math.abs(d.t1 - d.t0); const m = ppm(); if (len < (m ? 0.15 * m : 8)) { showMeasure(""); return; }
-  pushUndo(); const a = Math.min(d.t0, d.t1), b = Math.max(d.t0, d.t1);
-  const code = defaultCode(d.type, len);
-  S.plan.openings.push({ id: nextId("o", S.plan.openings), type: d.type, start: atT(d.wall, a), end: atT(d.wall, b), width: len, wall_id: d.wall.id,
-    polygon: null, confidence: 1, code, width_source: "editor", height_m: null, sill_m: null, kind: null });
-  S.sel = { kind: "opening", id: S.plan.openings[S.plan.openings.length - 1].id }; changed();
+  const len = d.wall ? Math.abs(d.t1 - d.t0) : dist(d.p1, d.p2); const m = ppm(); if (len < (m ? 0.15 * m : 8)) { showMeasure(""); return; }
+  pushUndo();
+  const o = { id: nextId("o", S.plan.openings), type: d.type, width: len, code: defaultCode(d.type, len), wall_id: null,
+    polygon: null, confidence: 1, width_source: "editor", height_m: null, sill_m: null, kind: null };
+  if (d.wall) { const a = Math.min(d.t0, d.t1), b = Math.max(d.t0, d.t1); o.start = atT(d.wall, a); o.end = atT(d.wall, b); o.wall_id = d.wall.id; }
+  else { o.start = d.p1; o.end = d.p2; if (!attachOpening(o)) hint("Abertura criada solta: não está na linha de nenhuma parede."); }
+  S.plan.openings.push(o); S.sel = { kind: "opening", id: o.id }; changed();
 });
 let previewNode = null;
 function preview(points, width, color) { if (!previewNode) { previewNode = new Konva.Line({ stroke: color, strokeWidth: width, opacity: 0.6, listening: false }); uiLayer.add(previewNode); } previewNode.points(points); previewNode.stroke(color); previewNode.strokeWidth(width); uiLayer.batchDraw(); }
@@ -432,7 +442,7 @@ function setTool(t) { S.tool = t; S.draw = null; S.calib = null; clearPreview();
   $$("#toolbar .tool").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
   $("#stage").style.cursor = t === "select" ? "default" : "crosshair";
   hint({ select: "Clique para selecionar, arraste para mover. Pontas: redimensionar. Botão direito: girar, copiar. Ctrl+C / Ctrl+V: copiar e colar no mouse. Roda do mouse: zoom.", wall: "Clique no início e no fim da parede. Encaixa nas linhas do PDF e em 0/90°.",
-    door: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.", window: "Pressione sobre uma parede e arraste ao longo dela. Solte na largura certa.",
+    door: "Arraste sobre uma parede, ou de um ponto a outro no vão entre paredes. Encaixa nas pontas e nas linhas do PDF.", window: "Arraste sobre uma parede, ou de um ponto a outro no vão entre paredes. Encaixa nas pontas e nas linhas do PDF.",
     calib: "Clique em dois pontos com distância conhecida e informe a medida." }[t]); render(); }
 $$("#toolbar .tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
 $("#undo").addEventListener("click", undo); $("#redo").addEventListener("click", redo);

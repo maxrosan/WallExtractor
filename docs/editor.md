@@ -11,7 +11,11 @@ página estática) e `Dockerfile` na raiz.
   para um `.onnx`) e entram como *pendente*. O revisor abre, corrige, marca
   como *corrigida* e a próxima abre sozinha.
 - **Editor de geometria.** Paredes e aberturas são segmentos com espessura,
-  na escala já resolvida pelo extrator. Arrastar move; pontas redimensionam;
+  na escala já resolvida pelo extrator. Porta e janela se desenham arrastando
+  sobre uma parede (a abertura pode passar do fim dela, para o vão que o
+  extrator deixa) ou entre dois pontos fora de parede, para o vão entre duas
+  paredes ou do fim de uma até a face de outra; ao soltar, a abertura é
+  alinhada à parede em cuja linha ela está. Arrastar move; pontas redimensionam;
   ferramentas de parede, porta e janela desenham com a medida em metros ao
   vivo. Encaixe nas pontas de outras paredes, em 0/90° e nas linhas do
   próprio PDF (a pena grossa e a pena média são enviadas como primitivas),
