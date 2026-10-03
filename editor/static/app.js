@@ -625,11 +625,44 @@ function importPlan(d) {
   }
   return { walls, openings, notes: d.notas || d.notes || null };
 }
+// Checks on an imported answer, as warnings only (the reviewer decides): a wall running across an opening,
+// an opening with no wall on its line, slightly tilted segments in an orthogonal drawing, points off the image,
+// tiny walls. Ids are the ones on screen after the import.
+function importWarnings() {
+  const out = [], W = S.plan.image.width, H = S.plan.image.height, t = medianThickness();
+  const off = p => p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H;
+  const tilt = x => { const dx = Math.abs(x.end[0] - x.start[0]), dy = Math.abs(x.end[1] - x.start[1]);
+    const a = Math.atan2(Math.min(dx, dy), Math.max(dx, dy)) * 180 / Math.PI; return a > 0.5 && a < 10 ? a : 0; };
+  for (const w of S.plan.walls) {
+    if (off(w.start) || off(w.end)) out.push(`parede ${w.id} fora da imagem`);
+    const a = tilt(w); if (a) out.push(`parede ${w.id} torta (${a.toFixed(1)}°)`);
+    if (dist(w.start, w.end) < 0.5 * t) out.push(`parede ${w.id} muito curta (${Math.round(dist(w.start, w.end))} px)`);
+  }
+  for (const o of S.plan.openings) {
+    if (off(o.start) || off(o.end)) out.push(`abertura ${o.id} fora da imagem`);
+    const a = tilt(o); if (a) out.push(`abertura ${o.id} torta (${a.toFixed(1)}°)`);
+    if (!o.wall_id) out.push(`abertura ${o.id} sem parede na sua linha`);
+    const L = dist(o.start, o.end) || 1e-9, ux = (o.end[0] - o.start[0]) / L, uy = (o.end[1] - o.start[1]) / L;
+    for (const w of S.plan.walls) {
+      const ax = axis(w); if (Math.abs(ux * ax.ux + uy * ax.uy) < Math.cos(5 * Math.PI / 180)) continue;
+      if (perpDist(w, [(o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2]) > Math.max(3, w.thickness / 2)) continue;
+      const t0 = proj(w, o.start), t1 = proj(w, o.end), lo = Math.min(t0, t1), hi = Math.max(t0, t1);
+      const over = Math.min(hi, ax.L) - Math.max(lo, 0);
+      if (over > Math.max(3, 0.25 * w.thickness)) out.push(`parede ${w.id} passa por cima do vão ${o.id} (${Math.round(over)} px)`);
+    }
+  }
+  return out;
+}
 function applyImport(got, from) {
   pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
   for (const o of S.plan.openings) if (!o.wall_id) attachOpening(o);  // needs the new walls in place
   S.sel = null; changed();
-  aiStatus(`Importado ${from}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` + (got.notes ? ` Notas da IA: ${got.notes}` : ""));
+  const warn = importWarnings();
+  const el = $("#ai-status"); el.className = "small";
+  el.innerHTML = `Importado ${esc(from)}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` +
+    (got.notes ? `<br>Notas da IA: ${esc(got.notes)}` : "") +
+    (warn.length ? `<div class="warn-list"><b>${warn.length} aviso(s) para conferir:</b><ul>${warn.slice(0, 12).map(w => `<li>${esc(w)}</li>`).join("")}` +
+      `${warn.length > 12 ? `<li>… e mais ${warn.length - 12}</li>` : ""}</ul></div>` : `<br>Nenhum aviso na verificação automática.`);
 }
 $("#ai-put").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;

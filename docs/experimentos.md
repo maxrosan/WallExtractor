@@ -530,3 +530,28 @@ menos da tolerância de uma parede do gabarito, e vice-versa), o Q1 fica em:
 | F1 por comprimento | 0,64 | 0,71 | 0,77 | 0,95 |
 
 `eval_vlm` passa a reportar `wall_len` junto com o F1 de pontas.
+
+## Correções com IA no portfólio de SJC: Claude x GPT (2026-10-03)
+
+As IAs corrigiram plantas do portfólio pelo pacote do editor e devolveram
+também os scripts e um relatório (`data/ferr`, fora do git).
+
+- Claude (24_terreo) escreveu um detector completo (`pipeline_automatico`:
+  espessura, paredes como pares de faces paralelas, junção, portas e janelas
+  pela cor, corte nos vãos). Em plantas que não viu (25_terreo,
+  25_superior) dá ~17 trechos em vez de 140-160, eixos internos a 1-2 px do
+  gabarito, F1 de pontas a 1,5% de 0,47-0,57 (E5: 0,08-0,11). Erra de forma
+  sistemática: toma a projeção da cobertura por face de parede (parede falsa
+  no alto, parede esquerda 26 px para fora), mede a janela com os
+  prolongamentos azul-claros (~20 px a mais de cada lado: F1 de janela 0-0,25)
+  e tem as cores de porta/janela fixas. Não incorporado como rascunho.
+- GPT (25_superior) corrigiu no olho e escreveu ferramentas de inspeção:
+  recorte ampliado com grade nas coordenadas originais e validação
+  (parede sobre vão, abertura solta, segmento torto). Incorporadas ao pacote
+  (`recortes/`) e à importação (avisos).
+- Divergência de convenção: o Claude não dividia a parede no T, o GPT
+  dividia. As 33 correções anteriores dividem em todos os 126 encontros em T
+  (nenhum atravessado), então o LEIA-ME passou a exigir a divisão em todo
+  encontro, e a janela medida só pelo caixilho.
+- Os gabaritos 24_terreo e 25_superior são as próprias correções das IAs,
+  então comparar uma IA com eles mede concordância, não acerto.

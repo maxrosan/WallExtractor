@@ -33,14 +33,21 @@ página estática) e `Dockerfile` na raiz.
   e janela, as convenções de eixo, espessura e vão, e um exemplo de
   resposta), `PROMPT.txt` (o pedido pronto para colar no chat) e `conferir.py`
   (desenha a resposta sobre a planta, para o modelo conferir antes de
-  entregar). A resposta entra por "Importar correção" (arquivo) ou "Colar
+  entregar) e `recortes/` (a planta em pedaços de 700 px com 15% de
+  sobreposição, ampliados 2x, com grade das coordenadas originais a cada
+  50 px, para o modelo ler pixels exatos). O LEIA-ME fixa as convenções das
+  correções: a parede é dividida em todo encontro (L, T, cruz) e vão; porta
+  entre os batentes; janela só pelo caixilho. A resposta entra por "Importar correção" (arquivo) ou "Colar
   resposta" (texto do chat; o JSON é achado mesmo dentro de um bloco de
   código). A importação aceita `door`/`window` ou porta/janela, segmentos
   como `start`/`end`, `x1…y2` ou `[x1, y1, x2, y2, t]`, `doors`/`windows`
   separados, ids e `wall_id` ausentes (a abertura é ligada pela geometria) e
   coordenadas de uma imagem reduzida (reescala por `image.width`). Troca as
   paredes e aberturas da tela (escala, quadro e origem ficam), salva como
-  rascunho e não muda o status; Ctrl+Z volta à anotação anterior.
+  rascunho e não muda o status; Ctrl+Z volta à anotação anterior. Depois
+  da importação o painel lista avisos para conferir (parede sobre um vão,
+  abertura sem parede na sua linha, segmento levemente torto, ponto fora da
+  imagem, parede curta demais); são só alertas, nada é bloqueado.
 - **Exportação para treino.** `GET /api/export?status=corrected` devolve um
   zip com `<id>.png` (lado maior 1024 px) e `<id>.json` (WallPlan nas
   coordenadas dessa imagem, com metros). `scripts/fetch_corrections.py` baixa

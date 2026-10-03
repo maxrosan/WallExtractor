@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -288,6 +289,10 @@ Arquivos:
 - `conferir.py`: desenha um `correcao.json` sobre `planta.png` (`python conferir.py correcao.json`
   gera `conferencia.png`; precisa só do Pillow).
 - `PROMPT.txt`: o pedido, pronto para colar no chat junto com os arquivos.
+- `recortes/`: a planta em pedaços ampliados {zoom}x, com grade das coordenadas ORIGINAIS de
+  `planta.png` a cada {step} px (linhas finas vermelhas, valores nas bordas). Use os recortes para
+  ler as coordenadas com precisão; nunca copie posições da imagem ampliada sem converter.
+{tiles}
 
 Coordenadas em pixels de `planta.png`, origem no canto superior esquerdo, x para a direita, y para
 baixo. Escala: {scale}.
@@ -302,17 +307,22 @@ que não existem, aberturas faltando ou com o tipo errado.
   de cota e de chamada, textos, móveis, louças, piso/azulejo, escadas, eixos e o contorno de áreas
   abertas (garagem coberta, varanda) quando não há parede desenhada.
 - Portas: folha (linha) com o arco de abertura, ou porta de correr. Janelas: caixilho (linhas finas
-  dentro da espessura da parede). Etiquetas ajudam: P1, P2… são portas; J1, J2… são janelas.
+  dentro da espessura da parede). Etiquetas ajudam: P1, P2… são portas; J1, J2… são janelas. Uma
+  etiqueta repetida (duas P2) indica tipos iguais em lugares diferentes: cada uma é uma abertura.
 
 ## Formato de `planta.json` e da resposta
 
 - `walls`: `{{"id": "w1", "start": [x, y], "end": [x, y], "thickness": px}}`. A linha vai pelo eixo
   da parede (no meio entre as duas faces) e `thickness` é a distância entre as faces, em pixels.
-  Paredes que se encontram terminam no cruzamento dos eixos. Em cada vão de porta ou janela a parede
-  é interrompida: um trecho termina numa borda do vão e outro começa na outra.
+  A parede é DIVIDIDA em todo encontro (em L, em T ou em cruz) e em todo vão: cada trecho vai de um
+  encontro ou borda de vão até o próximo. Num T, a parede que continua vira dois trechos que terminam
+  no eixo da parede que chega; em L, os dois trechos terminam no cruzamento dos eixos.
 - `openings`: `{{"id": "o1", "type": "door" | "window", "start": [x, y], "end": [x, y],
   "wall_id": "w3"}}`, sobre o eixo da parede, de uma borda do vão até a outra (a largura da abertura);
   `wall_id` é um dos trechos vizinhos (pode ficar de fora: o editor liga pela geometria).
+  Porta: entre os batentes, onde a linha da parede é interrompida (não pela folha nem pelo arco).
+  Janela: só a extensão do caixilho; prolongamentos coloridos, linhas de chamada e o círculo da
+  etiqueta não fazem parte da largura.
 
 Exemplo de resposta (uma parede com uma porta no meio):
 
@@ -330,19 +340,57 @@ Compare a anotação com `planta.png`, corrija paredes e aberturas (posição, p
 o que falta e o que sobra) e devolva `correcao.json` com a lista COMPLETA de `walls` e `openings`
 (não só as mudanças), JSON válido, com `plan_id` = "{pid}" e `image` = {{"width": {w}, "height": {h}}}.
 Coordenadas sempre em pixels de `planta.png`, mesmo que a imagem tenha sido reduzida para você ver.
-Se puder rodar código: comece do `planta.json` (juntar trechos alinhados ajuda), rode
+Para ler coordenadas, use os `recortes/` (a grade dá o valor exato). Se puder rodar código: comece
+do `planta.json` (juntar trechos alinhados ajuda, depois dividir nos encontros e vãos), rode
 `python conferir.py correcao.json`, olhe `conferencia.png` e ajuste antes de entregar. Se não puder
 gerar arquivo, responda só com o JSON num bloco de código: o editor aceita o texto colado.
 No editor, "Importar correção" (arquivo) ou "Colar resposta" (texto) carrega o resultado; nada é
 marcado como corrigido até o revisor conferir.
 """
 
-AI_PROMPT = """Anexei os arquivos de uma planta baixa (planta.png, planta_numerada.png, planta.json, LEIA-ME.md
-e conferir.py; se vierem num .zip, descompacte). Siga o LEIA-ME.md: corrija as paredes, portas e
+AI_PROMPT = """Anexei os arquivos de uma planta baixa (planta.png, planta_numerada.png, planta.json, LEIA-ME.md,
+conferir.py e a pasta recortes/; se vierem num .zip, descompacte). Siga o LEIA-ME.md: corrija as paredes, portas e
 janelas de planta.json comparando com planta.png e me devolva correcao.json com a lista completa, em
 pixels de planta.png ({w} x {h}), plan_id "{pid}". Se puder rodar código, confira com conferir.py antes
-de entregar. Se não puder gerar arquivo, responda só com o JSON num bloco de código.
+de entregar. Use os recortes com grade para ler as coordenadas. Se não puder gerar arquivo, responda
+só com o JSON num bloco de código.
 """
+
+
+def _ai_tiles(img: Image.Image, tile: int = 700, overlap: float = 0.15, zoom: int = 2, step: int = 50):
+    """The plan in overlapping zoomed pieces with a grid labelled in ORIGINAL pixel coordinates, so a model
+    can read exact positions instead of estimating them on a downscaled image. Returns [(name, png, box)]."""
+    from PIL import ImageDraw, ImageFont
+
+    W, H = img.size
+    font = ImageFont.load_default(size=13)
+
+    def starts(n):
+        if n <= tile:
+            return [0]
+        k = math.ceil((n - tile) / (tile * (1 - overlap))) + 1
+        return [round(i * (n - tile) / (k - 1)) for i in range(k)]
+
+    out = []
+    for r, y0 in enumerate(starts(H), 1):
+        for c, x0 in enumerate(starts(W), 1):
+            x1, y1 = min(W, x0 + tile), min(H, y0 + tile)
+            im = img.crop((x0, y0, x1, y1)).resize(((x1 - x0) * zoom, (y1 - y0) * zoom), Image.NEAREST).convert("RGB")
+            d = ImageDraw.Draw(im)
+            for x in range((x0 // step + 1) * step, x1, step):
+                X = (x - x0) * zoom
+                d.line([(X, 0), (X, im.height)], fill=(230, 120, 120), width=1)
+                for yy in (2, im.height - 16):
+                    d.text((X + 2, yy), str(x), fill=(200, 0, 0), font=font, stroke_width=2, stroke_fill="white")
+            for y in range((y0 // step + 1) * step, y1, step):
+                Y = (y - y0) * zoom
+                d.line([(0, Y), (im.width, Y)], fill=(230, 120, 120), width=1)
+                for xx in (2, im.width - 34):
+                    d.text((xx, Y + 2), str(y), fill=(200, 0, 0), font=font, stroke_width=2, stroke_fill="white")
+            b = io.BytesIO()
+            im.save(b, "PNG", compress_level=6)
+            out.append((f"recortes/r{r}c{c}_x{x0}-{x1}_y{y0}-{y1}.png", b.getvalue(), (x0, y0, x1, y1)))
+    return out
 
 AI_CHECK = '''# Desenha correcao.json sobre planta.png: paredes em vermelho, portas em verde, janelas em azul.
 # Uso: python conferir.py correcao.json  ->  conferencia.png
@@ -425,8 +473,10 @@ def ai_package(pid: str):
     img = Image.open(store.render_path(pid)).convert("RGB")
     plan = _ai_plan(row["corrected"] or row["machine"], pid, row["title"], img.size)
     ppm = plan["scale"].get("px_per_m")
-    fmt = dict(w=img.size[0], h=img.size[1], pid=pid,
-               scale=f"{ppm:.2f} px por metro (paredes costumam ter 0,10 a 0,25 m)" if ppm else "desconhecida")
+    tiles = _ai_tiles(img)
+    fmt = dict(w=img.size[0], h=img.size[1], pid=pid, zoom=2, step=50,
+               scale=f"{ppm:.2f} px por metro (paredes costumam ter 0,10 a 0,25 m)" if ppm else "desconhecida",
+               tiles="\n".join(f"  - `{n}`: x de {b[0]} a {b[2]}, y de {b[1]} a {b[3]}" for n, _p, b in tiles))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, im in (("planta.png", img), ("planta_numerada.png", _ai_overlay(img, plan))):
@@ -437,6 +487,8 @@ def ai_package(pid: str):
         z.writestr("LEIA-ME.md", AI_README.format(**fmt))
         z.writestr("PROMPT.txt", AI_PROMPT.format(**fmt))
         z.writestr("conferir.py", AI_CHECK)
+        for name, png, _box in tiles:
+            z.writestr(name, png)
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in row["title"])[:60] or pid
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="ia_{safe}.zip"'})

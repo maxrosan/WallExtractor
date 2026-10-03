@@ -87,3 +87,4 @@ td button{font-size:11px;padding:2px 6px}
 .btn-big{display:block;text-align:center;font:inherit;font-weight:600;padding:10px 14px;border-radius:6px;margin:6px 0 8px;text-decoration:none;cursor:pointer}
 .btn-big.primary{background:var(--accent);color:var(--accent-ink)}
 .err{color:var(--danger)}
+.warn-list{margin-top:4px;color:var(--warn)}.warn-list ul{margin:2px 0 0;padding-left:16px;max-height:160px;overflow:auto}
