@@ -114,6 +114,29 @@ a comparação é indicativa. A melhor época foi a última: o modelo ainda
 melhorava, e mais épocas devem render mais. Modelo em
 `/root/we/results_e4/best.onnx` (55 MB) no Pichau; script em `/root/we/run.sh`.
 
+**Só nas plantas brasileiras** (IoU por pixel, `wallextractor.eval_seg`, estilo
+original):
+
+| | Parede | Porta | Janela |
+|---|---|---|---|
+| 2 fora do treino (SJC m06-c, casa Alexandre) | 0,758 | 0,353 | 0,642 |
+| 9 usadas no treino (20x) | 0,884 | 0,681 | 0,745 |
+
+O número honesto é o das 2 fora do treino: parede e janela no nível do
+CubiCasa, porta bem abaixo (0,35). As 9 do treino mostram que o modelo
+consegue aprender o desenho brasileiro; com mais plantas corrigidas, a
+distância entre as duas linhas deve cair.
+
+**No editor.** O modelo foi publicado em `/data/model.onnx` pelo
+`PUT /api/model` (sha256 `aad7ef1d…`). Teste com o m06-c rasterizado (PDF só
+imagem, fora do treino): 6 s no servidor, paredes e janelas da planta no
+lugar, a maioria das portas no vão. Mas o ramo raster segmenta a folha
+inteira: moldura, faixas do carimbo e brasão viram "paredes" (149
+segmentos), e a planta, que ocupa um terço da folha, entra no modelo
+reduzida junto com a folha a 768 px. Próximo passo do ramo raster: recortar
+a região da planta antes de segmentar e segmentar em blocos na resolução
+cheia.
+
 ## Plantas brasileiras reais (2026-09-24)
 
 Quatro PDFs de projetos residenciais (um repetido) foram recebidos para
