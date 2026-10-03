@@ -441,3 +441,14 @@ Conclusão para o projeto: a heurística muda de estilo para estilo de
 desenho (camadas, cores, como o arco é traçado). O caminho principal passa a
 ser o modelo treinado nas correções (E5 e o Qwen-VL); o ramo vetorial fica
 como pré-anotação para o editor.
+
+### Gabarito limpo (2026-10-03)
+
+As 39 portas inexistentes foram removidas das correções no editor pela API
+(backup das plantas alteradas em `data/backup_before_rm/`, fora do git). As
+4 portas reais ficaram. Novo gabarito: 179 portas, 167 janelas.
+
+| tol. 25 cm, 33 plantas | Portas certas | Portas erradas | F1 portas | Janelas certas | Janelas erradas | F1 janelas |
+|---|---|---|---|---|---|---|
+| V2 | 171 / 179 | 135 | 0,71 | 138 / 167 | 11 | 0,87 |
+| V3 | 167 / 179 | 11 | 0,94 | 142 / 167 | 17 | 0,87 |

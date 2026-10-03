@@ -161,13 +161,13 @@ consomem o mesmo JSON.
   (no ar: `e1c8cc1`), então a branch antiga pode ser apagada.
 - Fila do editor: 33 plantas, todas corrigidas (4 de escritório, 29 de SJC).
   Cópia local em `data/gt` (`eval_openings.py --download`).
-- Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas):
-  portas 167/218 com 11 falsas, janelas 142/167 com 17 falsas. O gabarito
-  ainda tem ~39 portas falsas herdadas da V2 (ver `docs/experimentos.md`, V3);
-  o usuário decidiu manter as correções como estão.
+- Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas,
+  gabarito limpo): portas 167/179 com 11 falsas (F1 0,94), janelas 142/167
+  com 17 falsas (F1 0,87). As 39 portas falsas herdadas da V2 foram tiradas
+  das correções em 2026-10-03 (backup em `data/backup_before_rm/`).
 - Direção: o caminho principal é o modelo treinado nas correções (SegFormer
   E5 e depois o Qwen-VL), não refinar heurísticas por estilo de desenho.
-- E5 rodando no Pichau desde 2026-10-03 03:06 UTC: E4 + 33 correções
+- E5 rodando no Pichau desde 2026-10-03 03:12 UTC, já com o gabarito limpo: E4 + 33 correções
   (26 treino x20, 7 validação), 120 épocas. `run_e5.sh`, logs
   `run_e5.log`/`train_e5.log`, resultado em `/root/we/results_e5`.
 - Raster E4: IoU parede 0,747 / porta 0,562 / janela 0,723 (validação
