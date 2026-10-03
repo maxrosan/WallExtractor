@@ -181,9 +181,9 @@ consomem o mesmo JSON.
 - `main` = `claude/vector-false-doors` (V3, Qwen, botão do Claude), publicada
   no EasyPanel em 2026-10-03 (commit `d369760`). A branch
   `claude/jolly-brown-ij69cl` pode ser apagada.
-- Fila do editor: 33 plantas corrigidas (4 de escritório, 29 de SJC) e 17
-  pendentes do portfólio de SJC (raster, recortadas na planta).
-  Cópia local em `data/gt` (`eval_openings.py --download`).
+- Fila do editor: 50 plantas, todas corrigidas (4 de escritório, 29 vetoriais
+  de SJC, 17 do portfólio raster de SJC, as do portfólio com ajuda de IA em
+  lote). Cópia local antiga em `data/gt` (33 plantas).
 - Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas,
   gabarito limpo): portas 167/179 com 11 falsas (F1 0,94), janelas 142/167
   com 17 falsas (F1 0,87). As 39 portas falsas herdadas da V2 foram tiradas
@@ -193,17 +193,19 @@ consomem o mesmo JSON.
 - Raster E5 (2026-10-03, publicado no editor): IoU nas 7 brasileiras de
   validação parede 0,894 / porta 0,673 / janela 0,724 (E4: 0,837 / 0,522 /
   0,714). Modelo em `/root/we/results_e5/best.onnx`.
-- Qwen3-VL-4B: código no commit `d471451`. `run_vlm.sh` está na fila do
-  Pichau, rodando desde 2026-10-03 06:02 UTC: dados (CubiCasa 1600 + 26
-  correções x20, imagens de lado 1024), teste de memória com 32 exemplos,
-  avaliação zero-shot do modelo base nas 7 brasileiras, LoRA 2 épocas,
-  avaliação final (7 brasileiras + 30 CubiCasa). Logs `run_vlm.log`,
-  `vlm_*.log`.
+- Q1 (Qwen3-VL-4B LoRA, 33 plantas): F1 a 1,5% nas 7 BR de validação
+  paredes 0,32 (pontas) / 0,77 (comprimento), portas 0,34, janelas 0,27;
+  a 5%: 0,68 / 0,95, portas 0,80, janelas 0,70 (`docs/experimentos.md`).
+- Em andamento no Pichau desde 2026-10-03 20:21 UTC (`run_e6_q2.sh`, log
+  `run_e6_q2.log`): 50 correções (40 treino, 10 validação), E6 = receita do
+  E5 com 80 épocas, avaliação de E5 e E6 na validação nova, Q2 = Q1 com as
+  50 plantas (repetição 10) e 2 épocas, avaliação de Q1 e Q2 na validação
+  nova. Dados das 33 plantas guardados em `prepared_corr_33` e `vlm_33`.
 
 ## Próximos passos
 
-1. Acompanhar o Qwen (`run_vlm.sh`, logs `vlm_*.log`).
+1. Quando `run_e6_q2.sh` terminar: comparar E6 com E5 e Q2 com Q1 na
+   validação nova (10 plantas), registrar em `docs/experimentos.md` e, se o
+   E6 for melhor, publicar no editor (`PUT /api/model`).
 2. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.
-3. Quando o Qwen terminar: comparar com o E5 e com o vetorial nas 7
-   brasileiras de validação e registrar em `docs/experimentos.md`.
