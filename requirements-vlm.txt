@@ -1,0 +1,5 @@
+# Qwen3-VL fine-tuning (GPU; torch comes with the pytorch/pytorch image).
+-r requirements-train.txt
+transformers==4.57.6
+peft>=0.17
+accelerate
