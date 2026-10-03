@@ -278,6 +278,84 @@ def _export_pair(row: dict) -> tuple[bytes, dict]:
     return buf.getvalue(), p
 
 
+CLAUDE_README = """# Planta para correção com o Claude
+
+Arquivos:
+- `planta.png`: a planta como o editor mostra ({w} x {h} px).
+- `planta_numerada.png`: a mesma imagem com a anotação atual por cima: paredes em vermelho
+  (w1, w2, ...), portas em verde e janelas em azul (o1, o2, ...).
+- `planta.json`: a anotação atual (saída da máquina ou a última correção salva).
+
+Coordenadas em pixels de `planta.png`, origem no canto superior esquerdo, y para baixo.
+Escala: {scale}.
+
+Formato de `planta.json` (e da resposta):
+- `walls`: cada parede é o eixo de um trecho de parede desenhado, `{{"id": "w1", "start": [x, y],
+  "end": [x, y], "thickness": px}}`. Nos vãos de porta e janela a parede é interrompida.
+- `openings`: `{{"id": "o1", "type": "door" | "window", "start": [x, y], "end": [x, y],
+  "wall_id": "w3"}}`, no vão, sobre a linha da parede; `start`-`end` é a largura do vão.
+
+Pedido ao Claude: compare a anotação com a planta, corrija paredes e aberturas (posição, pontas,
+espessura, o que falta e o que sobra) e devolva um arquivo `correcao.json` com o mesmo formato,
+mantendo `plan_id` = "{pid}" e `image` = {{"width": {w}, "height": {h}}}. No editor, use
+"Importar do Claude" para carregar o arquivo; nada é salvo como corrigido até você conferir.
+"""
+
+
+def _claude_overlay(img: Image.Image, plan: dict) -> Image.Image:
+    from PIL import ImageDraw, ImageFont
+
+    out = Image.blend(img.convert("RGB"), Image.new("RGB", img.size, "white"), 0.35)
+    d = ImageDraw.Draw(out)
+    side = max(img.size)
+    lw = max(2, round(side / 600))
+    font = ImageFont.load_default(size=max(12, round(side / 90)))
+
+    def label(p, text, color):
+        x, y = p
+        box = d.textbbox((x, y), text, font=font, anchor="mm")
+        d.rectangle([box[0] - 2, box[1] - 1, box[2] + 2, box[3] + 1], fill="white", outline=color)
+        d.text((x, y), text, fill=color, font=font, anchor="mm")
+
+    for w in plan.get("walls", []):
+        d.line([tuple(w["start"]), tuple(w["end"])], fill=(200, 30, 30), width=lw)
+    colors = {"door": (20, 140, 70), "window": (40, 90, 220)}
+    for o in plan.get("openings", []):
+        d.line([tuple(o["start"]), tuple(o["end"])], fill=colors.get(o.get("type"), (90, 90, 90)), width=lw * 3)
+    for w in plan.get("walls", []):
+        label(((w["start"][0] + w["end"][0]) / 2, (w["start"][1] + w["end"][1]) / 2), w["id"], (200, 30, 30))
+    for o in plan.get("openings", []):
+        label(((o["start"][0] + o["end"][0]) / 2, (o["start"][1] + o["end"][1]) / 2), o["id"],
+              colors.get(o.get("type"), (90, 90, 90)))
+    return out
+
+
+@app.get("/api/plans/{pid}/claude", dependencies=[Depends(auth)])
+def claude_package(pid: str):
+    """Zip for asking Claude to correct a plan: image, numbered overlay, current annotation, instructions."""
+    row = store.get(pid)
+    if row is None or not os.path.isfile(store.render_path(pid)):
+        raise HTTPException(404)
+    plan = json.loads(json.dumps(row["corrected"] or row["machine"]))
+    img = Image.open(store.render_path(pid)).convert("RGB")
+    plan["plan_id"] = pid
+    plan["title"] = row["title"]
+    plan["image"] = dict(plan.get("image") or {}, width=img.size[0], height=img.size[1])
+    ppm = (plan.get("scale") or {}).get("px_per_m")
+    scale = f"{ppm:.2f} px por metro" if ppm else "desconhecida"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, im in (("planta.png", img), ("planta_numerada.png", _claude_overlay(img, plan))):
+            b = io.BytesIO()
+            im.save(b, "PNG", optimize=True)
+            z.writestr(name, b.getvalue())
+        z.writestr("planta.json", json.dumps(plan, ensure_ascii=False, indent=1))
+        z.writestr("LEIA-ME.md", CLAUDE_README.format(w=img.size[0], h=img.size[1], scale=scale, pid=pid))
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in row["title"])[:60] or pid
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="claude_{safe}.zip"'})
+
+
 @app.get("/api/export", dependencies=[Depends(auth)])
 def export(status: str = "corrected"):
     """Zip of <id>.png + <id>.json for every plan with the given status (training pairs)."""

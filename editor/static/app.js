@@ -532,6 +532,51 @@ async function markStatus(status) {
   const cur = S.pid; await loadQueue();
   const next = S.plans.find(p => p.status === "pending" && p.id !== cur); if (next) openPlan(next.id); else { hint("Fila de pendentes vazia."); }
 }
+// ------------------------------------------------------------------ Claude: package out, correction in
+function claudeStatus(t, cls) { const el = $("#claude-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
+$("#claude-get").addEventListener("click", async () => {
+  if (!S.pid) return; if (S.dirty) await save();
+  claudeStatus("Preparando o pacote…");
+  try {
+    const r = await api(`/plans/${S.pid}/claude`); const blob = await r.blob();
+    const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `claude_${S.pid}.zip`;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    claudeStatus(`Baixado ${name}. Envie ao Claude e importe o correcao.json que ele devolver.`);
+  } catch (err) { claudeStatus("Falhou: " + err.message, "err"); }
+});
+// The correction replaces walls and openings (scale, codes and source stay); ids are made unique, openings whose
+// wall is gone lose the link, and a different image size is rescaled. Ctrl+Z restores the previous annotation.
+function importPlan(d) {
+  if (!d || !Array.isArray(d.walls) || !Array.isArray(d.openings)) throw new Error("o arquivo precisa ter walls e openings");
+  if (d.plan_id && d.plan_id !== S.pid && !confirm(`Este arquivo é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return null;
+  const k = d.image && d.image.width ? S.plan.image.width / d.image.width : 1;
+  const pt = p => { if (!Array.isArray(p) || p.length < 2 || !isFinite(p[0]) || !isFinite(p[1])) throw new Error("ponto inválido: " + JSON.stringify(p)); return [p[0] * k, p[1] * k]; };
+  const walls = [], ids = new Map();
+  for (const w of d.walls) {
+    const id = nextId("w", walls); ids.set(String(w.id), id);
+    const t = Number(w.thickness) > 0 ? Number(w.thickness) * k : medianThickness();
+    walls.push({ id, start: pt(w.start), end: pt(w.end), thickness: t, kind: w.kind || null, polygon: null });
+  }
+  const openings = [];
+  for (const o of d.openings) {
+    const start = pt(o.start), end = pt(o.end);
+    openings.push({ id: nextId("o", openings), type: o.type === "window" ? "window" : "door", start, end, width: dist(start, end),
+      wall_id: ids.get(String(o.wall_id)) || null, polygon: null, confidence: 1, code: o.code || null, width_source: "claude",
+      height_m: o.height_m ?? null, sill_m: o.sill_m ?? null, kind: o.kind || null });
+  }
+  return { walls, openings };
+}
+$("#claude-put").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;
+  try {
+    const got = importPlan(JSON.parse(await f.text())); if (!got) return;
+    pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
+    for (const o of S.plan.openings) if (!o.wall_id) attachOpening(o);  // needs the new walls in place
+    S.sel = null; changed();
+    claudeStatus(`Importado ${f.name}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.`);
+  } catch (err) { claudeStatus("Não importado: " + err.message, "err"); }
+});
+
 $("#mark-corrected").addEventListener("click", () => markStatus("corrected"));
 $("#mark-skip").addEventListener("click", () => markStatus("skipped"));
 $("#upload").addEventListener("change", async e => {

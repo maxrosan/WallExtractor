@@ -25,6 +25,17 @@ página estática) e `Dockerfile` na raiz.
   encaixa nas larguras do quadro.
 - **Escala.** Vem das cotas; a ferramenta Escala recalibra com dois cliques e
   uma distância.
+- **Ajuda do Claude.** "Pedir ajuda ao Claude" (painel da direita) salva a
+  planta e baixa `claude_<título>.zip` (`GET /api/plans/{id}/claude`) com
+  `planta.png` (render base), `planta_numerada.png` (anotação atual por cima,
+  paredes w1… e aberturas o1… numeradas), `planta.json` (a anotação, em
+  pixels de `planta.png`) e `LEIA-ME.md` com o formato da resposta. O Claude
+  devolve `correcao.json` no mesmo formato; "Importar do Claude" troca as
+  paredes e aberturas da tela por ele (escala, quadro e origem ficam), liga
+  cada abertura à sua parede, salva como rascunho e não muda o status: o
+  revisor confere, refina e marca como corrigida. Ctrl+Z volta à anotação
+  anterior. Um arquivo de outra planta pede confirmação; outro tamanho de
+  imagem é reescalado.
 - **Exportação para treino.** `GET /api/export?status=corrected` devolve um
   zip com `<id>.png` (lado maior 1024 px) e `<id>.json` (WallPlan nas
   coordenadas dessa imagem, com metros). `scripts/fetch_corrections.py` baixa

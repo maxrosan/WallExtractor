@@ -74,6 +74,16 @@
       <button id="mark-skip">Pular</button>
     </div>
 
+    <section class="panel">
+      <h3>Claude</h3>
+      <div class="row">
+        <button id="claude-get" title="Baixa um .zip com a planta, a anotação atual numerada e as instruções">Pedir ajuda ao Claude</button>
+        <label class="btn-like" title="Carrega o correcao.json devolvido pelo Claude (Ctrl+Z desfaz)">
+          <input type="file" id="claude-put" accept=".json,application/json" hidden>Importar do Claude</label>
+      </div>
+      <div id="claude-status" class="muted small">Baixe o pacote, peça a correção ao Claude e importe o <span class="mono">correcao.json</span> que ele devolver.</div>
+    </section>
+
     <section id="sel-panel" class="panel">
       <h3>Seleção</h3>
       <div id="sel-none" class="muted small">Clique numa parede ou abertura. Arraste as pontas para redimensionar.</div>
