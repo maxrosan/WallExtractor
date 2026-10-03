@@ -117,6 +117,7 @@ def main() -> None:
         pred = res[0].to_dict()
         ppm = gold_plan["scale"]["px_per_m"]
         line = [f"{row['title'][:48]:48s}"]
+        details = []
         for t in ("door", "window"):
             P = [o for o in pred["openings"] if o["type"] == t]
             G = [o for o in gold_plan["openings"] if o["type"] == t]
@@ -129,13 +130,15 @@ def main() -> None:
             if a.verbose:
                 for i in fp:
                     o = P[i]
-                    print(f"   FP {t} {o.get('code')} wall={o.get('wall_id')} mid=({_mid(o)[0]:.0f},{_mid(o)[1]:.0f}) "
-                          f"w={_len(o) / ppm:.2f} m dir={_dir(o):.0f}")
+                    details.append(f"   FP {t} {o.get('code')} wall={o.get('wall_id')} mid=({_mid(o)[0]:.0f},{_mid(o)[1]:.0f}) "
+                                   f"w={_len(o) / ppm:.2f} m dir={_dir(o):.0f}")
                 for j in fn:
                     o = G[j]
-                    print(f"   FN {t} {o.get('code')} wall={o.get('wall_id')} mid=({_mid(o)[0]:.0f},{_mid(o)[1]:.0f}) "
-                          f"w={_len(o) / ppm:.2f} m dir={_dir(o):.0f}")
+                    details.append(f"   FN {t} {o.get('code')} wall={o.get('wall_id')} mid=({_mid(o)[0]:.0f},{_mid(o)[1]:.0f}) "
+                                   f"w={_len(o) / ppm:.2f} m dir={_dir(o):.0f}")
         print(" | ".join(line))
+        for d in details:  # under the plan they belong to
+            print(d)
     for t, (tp, fp, fn, rot) in tot.items():
         p = tp / (tp + fp) if tp + fp else 0.0
         r = tp / (tp + fn) if tp + fn else 0.0

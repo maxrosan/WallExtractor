@@ -41,6 +41,7 @@ class Segment:
     a: Point
     b: Point
     width: float
+    color: Optional[Tuple[float, ...]] = None  # stroke (or fill) colour: CAD layers usually map to colours
 
     @property
     def length(self) -> float:
@@ -83,22 +84,23 @@ def page_segments(page, min_width: float = 0.0) -> List[Segment]:
         w = float(d.get("width") or 0.0)
         if w < min_width:
             continue
+        col = d.get("color") or d.get("fill")
         r = fitz.Rect(d["rect"])
         if r.width * r.height > 0.5 * page_area:
             continue  # sheet frame / title block border
         for it in d["items"]:
             if it[0] == "l":
-                segs.append(Segment(_xy(m, it[1].x, it[1].y), _xy(m, it[2].x, it[2].y), w))
+                segs.append(Segment(_xy(m, it[1].x, it[1].y), _xy(m, it[2].x, it[2].y), w, col))
             elif it[0] == "re":
                 q = it[1]
                 pts = [(q.x0, q.y0), (q.x1, q.y0), (q.x1, q.y1), (q.x0, q.y1)]
                 for i in range(4):
-                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w))
+                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w, col))
             elif it[0] == "qu":
                 q = it[1]
                 pts = [(q.ul.x, q.ul.y), (q.ur.x, q.ur.y), (q.lr.x, q.lr.y), (q.ll.x, q.ll.y)]
                 for i in range(4):
-                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w))
+                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w, col))
     return segs
 
 
@@ -480,16 +482,24 @@ def extract_walls(page, region: Optional[PlanRegion] = None, thickness_m: Tuple[
 _TAG_RE = re.compile(r"^\(?([PJ])\s?\d{1,2}\)?[.,]?$", re.IGNORECASE)
 
 
-def page_curves(page) -> List[Tuple[Point, Point, float]]:
-    """Bezier items as (start, end, stroke width) in display coordinates (door swings are arcs)."""
+def page_curves(page) -> List[Tuple[Point, Point, float, Optional[Tuple[float, ...]]]]:
+    """Bezier items as (start, end, stroke width, colour) in display coordinates (door swings are arcs)."""
     m = _display_xform(page)
     out = []
     for d in page.get_drawings():
         w = float(d.get("width") or 0.0)
+        col = d.get("color") or d.get("fill")
         for it in d["items"]:
             if it[0] == "c":
-                out.append((_xy(m, it[1].x, it[1].y), _xy(m, it[4].x, it[4].y), w))
+                out.append((_xy(m, it[1].x, it[1].y), _xy(m, it[4].x, it[4].y), w, col))
     return out
+
+
+def same_color(c1, c2, tol: float = 0.02) -> bool:
+    """Colours match (unknown colours match anything)."""
+    if c1 is None or c2 is None:
+        return True
+    return len(c1) == len(c2) and all(abs(a - b) <= tol for a, b in zip(c1, c2))
 
 
 def _wall_gaps(walls: Sequence[Wall], gap_range: Tuple[float, float], offset_tol: float = 2.0,
@@ -582,7 +592,7 @@ def dedupe_walls(walls: List[Wall], offset_tol: float = 1.0, angle_tol_deg: floa
     return keep
 
 
-def chain_curves(curves: Sequence[Tuple[Point, Point, float]], tol: float = 0.6):
+def chain_curves(curves: Sequence[tuple], tol: float = 0.6):
     """Join bezier pieces end-to-start into arcs. Returns (start, end, n_pieces, path_len) per chain."""
     n = len(curves)
     parent = list(range(n))
@@ -594,7 +604,7 @@ def chain_curves(curves: Sequence[Tuple[Point, Point, float]], tol: float = 0.6)
         return i
 
     ends: Dict[Tuple[int, int], List[int]] = defaultdict(list)
-    for i, (a, b, _w) in enumerate(curves):
+    for i, (a, b) in enumerate(c[:2] for c in curves):
         for p in (a, b):
             ends[(round(p[0] / tol), round(p[1] / tol))].append(i)
     for idxs in ends.values():
@@ -610,7 +620,7 @@ def chain_curves(curves: Sequence[Tuple[Point, Point, float]], tol: float = 0.6)
         cnt: Counter = Counter()
         path = 0.0
         for i in idxs:
-            a, b, _w = curves[i]
+            a, b = curves[i][:2]
             path += math.hypot(b[0] - a[0], b[1] - a[1])
             for p in (a, b):
                 cnt[(round(p[0] / tol), round(p[1] / tol))] += 1
@@ -664,11 +674,11 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
     thin_all = [s for s in segs if 1e-3 < s.width < pen - 1e-3 and _inside(s, region.rect) and s.length > 2.0]
     mid_pen = [s for s in thin_all if s.width >= 0.2 * pen]
     # pieces that may belong to a swing arc: bezier bits, or short thin lines of a polyline arc
-    arc_pieces = [(c[0], c[1]) for c in curves] + [
-        (s.a, s.b) for s in segs if 1e-3 < s.width < pen - 1e-3 and s.length <= 0.2 * ppm and _inside(s, region.rect)]
+    arc_pieces = [(c[0], c[1], c[3]) for c in curves] + [
+        (s.a, s.b, s.color) for s in segs if 1e-3 < s.width < pen - 1e-3 and s.length <= 0.2 * ppm and _inside(s, region.rect)]
 
     def on_circle(hx, hy, radius):
-        return sum(1 for a, b in arc_pieces
+        return sum(1 for a, b, _c in arc_pieces
                    if abs(math.hypot((a[0] + b[0]) / 2 - hx, (a[1] + b[1]) / 2 - hy) - radius) <= 0.15 * radius)
 
     per_wall: Dict[int, List[Tuple[float, float, List[str]]]] = defaultdict(list)
@@ -754,9 +764,13 @@ def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: 
             if far is None:
                 # polyline or dashed swing: which quarter circle on the tip's side is drawn? Count the
                 # 10-degree slices holding a piece, so clutter at one spot (handle, hatching) cannot win.
+                # Only pieces in the leaf's colour count: the swing is drawn on the door layer, while floor
+                # tiles and dimension figures that happen to cross the circle are on layers of their own.
                 hx, hy = ax + ux * th + nx * o_h, ay + uy * th + ny * o_h
                 bins = {1.0: set(), -1.0: set()}
-                for a, b in arc_pieces:
+                for a, b, col in arc_pieces:
+                    if not same_color(col, s.color):
+                        continue
                     mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
                     if abs(math.hypot(mx - hx, my - hy) - leaf) > 0.12 * leaf:
                         continue

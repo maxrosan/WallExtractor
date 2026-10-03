@@ -402,3 +402,42 @@ problema é a precisão das portas: 69 falsas, de 0 a 7 por planta (m02-d, m06-a
 m06-f, m04, m13-a com 6-7). Todas sem etiqueta P (o desenho de SJC não tem),
 o que confirma o próximo alvo: folhas falsas em armário, louça e piso. Nas
 janelas, os 12 erros são omissões.
+
+## V3: arco da porta só na cor da folha (2026-10-03)
+
+Diagnóstico das 96 portas falsas da V2 nas 33 plantas: 93 vinham do recurso
+de "arco em polilinha" (contar fatias de 10° com pedaços curtos sobre o
+círculo da folha), que aceitava pedaços de qualquer camada. Nas plantas de
+SJC o piso (ciano) e os algarismos das cotas (roxo, em traços) enchiam o
+círculo. O caminho do arco encadeado (Bézier) tinha 116 portas certas e 2
+erradas.
+
+Mudança: `Segment` e `page_curves` passam a carregar a cor do traço, e no
+recurso de polilinha só contam pedaços da mesma cor da folha (cor
+desconhecida casa com qualquer uma). Paredes iguais nas 33 plantas e
+`schema.validate` sem erros.
+
+| tol. 25 cm, 33 plantas | Portas certas | Portas erradas | F1 portas | Janelas certas | Janelas erradas | F1 janelas |
+|---|---|---|---|---|---|---|
+| V2 | 210 / 218 | 96 | 0,80 | 138 / 167 | 11 | 0,87 |
+| V3 | 167 / 218 | 11 | 0,84 | 142 / 167 | 17 | 0,87 |
+
+A queda de portas certas é quase toda do gabarito: das 43 portas que a V3
+deixa de achar, revisadas no recorte, 39 não existem no desenho (parede de
+banheiro sem abertura, ou janela "1.00X0.60"/"1.50X1.10"). São portas falsas
+da V2 que ficaram nas correções de m11, m12, m13-b, m14-a, m14-b, m15-a e
+m15-b. As outras 4 são portas reais com a folha vermelha e o arco laranja
+(camadas diferentes), que só passavam antes pelo ruído do piso.
+
+Testado e descartado:
+- exigir peças tangentes ao círculo (|corda · raio| pequeno): com tolerância
+  0,2 deixou 27 portas falsas mas perdeu 40 certas, e o arco das portas de
+  SJC é uma Bézier só, não peças tangentes;
+- aceitar também as cores das curvas longas da página, ou curvas de qualquer
+  cor: as louças são curvas laranja, e as falsas voltaram a 95;
+- dividir cada Bézier em 6 cordas: nenhuma porta a mais, 6 falsas a mais.
+
+Conclusão para o projeto: a heurística muda de estilo para estilo de
+desenho (camadas, cores, como o arco é traçado). O caminho principal passa a
+ser o modelo treinado nas correções (E5 e o Qwen-VL); o ramo vetorial fica
+como pré-anotação para o editor.
