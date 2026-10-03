@@ -555,3 +555,30 @@ também os scripts e um relatório (`data/ferr`, fora do git).
   encontro, e a janela medida só pelo caixilho.
 - Os gabaritos 24_terreo e 25_superior são as próprias correções das IAs,
   então comparar uma IA com eles mede concordância, não acerto.
+
+### Lotes da IA: GPT (5 plantas) e Claude (5 plantas), detector v2 (2026-10-03)
+
+- Lote do GPT (24_superior, 23, 22, 21b, 21a): correções boas e coerentes com
+  as convenções (0 avisos, todos os T divididos), mas o relatório final veio
+  genérico; o LEIA-ME do lote passou a trazer um modelo com tabelas.
+- Lote do Claude (18c, 19a, 19b, 19c, 20): relatório completo no modelo. Ele
+  rodou o próprio detector (`ferramentas.py` v2: pares de faces com
+  tolerância de 15%, "miolo limpo" entre as faces para não casar face com
+  cota, duas espessuras por planta, cores saturadas fora da máscara, soleira
+  reconhecida, divisão nos encontros) e editou à mão só o que ele errou: 16
+  edições em 5 plantas. Essas correções nasceram do detector, então
+  carregam o viés dele.
+- Detector v2 contra 7 plantas corrigidas por outra fonte (o lote do GPT,
+  25_terreo e 25_superior), F1 a 1,5% do lado maior:
+
+| rascunho | paredes por comprimento | paredes (pontas) | portas | janelas |
+|---|---|---|---|---|
+| E5 + vetorização (atual) | 0,94 | 0,10 | 0,55 | 0,80 |
+| detector v1 do Claude | 0,92 | 0,53 | 0,70 | 0,64 |
+| detector v2 do Claude | 0,91 | 0,72 | 0,75 | 0,67 |
+
+  O v2 entrega 14-27 trechos em vez de 130-200 e acerta as pontas, mas perde
+  as paredes internas quando elas são desenhadas mais finas que as externas
+  (21a e 21b: ~12 px contra 20 px, fora da faixa de 0,7-1,5·t), e com elas as
+  portas internas. As janelas da 25_terreo e 25_superior continuam medidas
+  com os prolongamentos.
