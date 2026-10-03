@@ -101,8 +101,7 @@ O editor está no ar desde 24/09/2026:
 
 - Painel: projeto `botai`, serviço **App** `wallextractor-editor`.
 - URL: https://botai-wallextractor-editor.uuclvw.easypanel.host
-- Origem: `github.com/maxrosan/WallExtractor`, branch
-  `claude/jolly-brown-ij69cl`, build pelo `Dockerfile` da raiz.
+- Origem: `github.com/maxrosan/WallExtractor`, branch `main`, build pelo `Dockerfile` da raiz.
 - Volume `wallextractor-data` montado em `/data` (PDFs, renders e o SQLite).
   O banco é SQLite nesse volume; o Postgres (`PGDB`) ainda não é usado.
 - Variáveis do serviço: `EDITOR_TOKEN`, `EDITOR_DATA`, `PYTHONUNBUFFERED`.

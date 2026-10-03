@@ -383,3 +383,22 @@ mesmo comprimento (piso cerâmico desenhado com a mesma pena da folha): tirou
 Ficam de fora: nas plantas de SJC, folhas falsas em armários e louças (os
 27 erros de porta são quase todos aí); janelas estreitas de 0,37-0,40 m;
 janelas de canto (J3) e aberturas sem etiqueta nas plantas de escritório.
+
+## V2 nas 22 plantas novas de SJC (2026-10-03)
+
+As 22 plantas restantes de SJC (m02-a a m15-a) foram corrigidas no editor
+sobre a saída da V2; total agora de 33 plantas. Nenhuma parede corrigida em
+nenhuma das 33. Código inalterado: só medição
+(`scripts/eval_openings.py data/gt --tol 0.25`).
+
+| tol. 25 cm | Portas certas | Portas erradas | Giradas | F1 portas | Janelas certas | Janelas erradas | F1 janelas |
+|---|---|---|---|---|---|---|---|
+| 11 antigas | 67 / 74 | 27 | 2 | 0,80 | 45 / 62 | 11 | 0,76 |
+| 22 novas | 143 / 144 | 69 | 2 | 0,80 | 93 / 105 | 0 | 0,94 |
+| 33 | 210 / 218 | 96 | 4 | 0,80 | 138 / 167 | 11 | 0,87 |
+
+Nas 22 novas a revocação de portas é quase total e não há janela falsa; o
+problema é a precisão das portas: 69 falsas, de 0 a 7 por planta (m02-d, m06-a,
+m06-f, m04, m13-a com 6-7). Todas sem etiqueta P (o desenho de SJC não tem),
+o que confirma o próximo alvo: folhas falsas em armário, louça e piso. Nas
+janelas, os 12 erros são omissões.
