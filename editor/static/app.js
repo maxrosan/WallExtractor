@@ -546,6 +546,11 @@ function aiStep(name, state, extra) {
 }
 function aiFail(step, msg) { aiStep(step, "fail"); const e = $("#ai-err"); e.textContent = "Falhou: " + msg; e.hidden = false; }
 $("#ai-close").addEventListener("click", () => { $("#ai-modal").hidden = true; });
+$("#ai-copy").addEventListener("click", async () => {
+  const t = $("#ai-prompt"); let ok = false;
+  try { await navigator.clipboard.writeText(t.value); ok = true; } catch (e) { t.focus(); t.select(); ok = document.execCommand("copy"); }
+  $("#ai-copy").textContent = ok ? "Copiado ✓" : "Selecione e copie (Ctrl+C)";
+});
 async function aiDownload(title, url, opts, fallbackName, nextSteps) {
   if (AI.url) { URL.revokeObjectURL(AI.url); AI.url = null; }
   $("#ai-title").textContent = title; $("#ai-next").innerHTML = nextSteps;
@@ -576,6 +581,8 @@ async function aiDownload(title, url, opts, fallbackName, nextSteps) {
   const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || fallbackName;
   AI.url = URL.createObjectURL(new Blob(parts, { type: "application/zip" }));
   const a = $("#ai-dl"); a.href = AI.url; a.download = name; a.textContent = `Baixar ${name}`;
+  let prompt = ""; try { prompt = decodeURIComponent(r.headers.get("x-ai-prompt") || ""); } catch (e) {}
+  $("#ai-prompt").value = prompt; $(".prompt-box").hidden = !prompt; $("#ai-copy").textContent = "Copiar texto";
   aiStep("done", "done"); $("#ai-ready").hidden = false; a.focus();
   return name;
 }

@@ -507,6 +507,13 @@ def _safe(title: str, pid: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:60] or pid
 
 
+def _ai_prompt_header(text: str) -> dict:
+    """The prompt also travels in a header (URL-encoded), so the page can show it next to the download."""
+    from urllib.parse import quote
+
+    return {"X-AI-Prompt": quote(text), "Access-Control-Expose-Headers": "X-AI-Prompt"}
+
+
 def _ai_files(row: dict) -> list:
     """The files of one plan's package as [(name, bytes)]: image, numbered overlay, trimmed annotation,
     instructions, a ready prompt, the checking script and the grid tiles."""
@@ -538,11 +545,15 @@ def ai_package(pid: str):
     if row is None or not os.path.isfile(store.render_path(pid)):
         raise HTTPException(404)
     buf = io.BytesIO()
+    prompt = ""
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in _ai_files(row):
             z.writestr(name, data)
+            if name == "PROMPT.txt":
+                prompt = data.decode("utf-8")
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="ia_{_safe(row["title"], pid)}.zip"'})
+                    headers={"Content-Disposition": f'attachment; filename="ia_{_safe(row["title"], pid)}.zip"',
+                             **_ai_prompt_header(prompt)})
 
 
 @app.post("/api/ai/batch", dependencies=[Depends(auth)])
@@ -570,10 +581,12 @@ def ai_batch(body: Dict[str, Any]):
             w, h = Image.open(store.render_path(row["id"])).size
             table.append(f"| `{folder}/` | {row['id']} | {w} x {h} |")
         z.writestr("LEIA-ME_LOTE.md", AI_BATCH_README.format(n=len(rows), rows="\n".join(table)))
-        z.writestr("PROMPT_LOTE.txt", AI_BATCH_PROMPT.format(n=len(rows)))
+        prompt = AI_BATCH_PROMPT.format(n=len(rows))
+        z.writestr("PROMPT_LOTE.txt", prompt)
     stamp = __import__("time").strftime("%Y%m%d-%H%M")
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="ia_lote_{len(rows)}_plantas_{stamp}.zip"'})
+                    headers={"Content-Disposition": f'attachment; filename="ia_lote_{len(rows)}_plantas_{stamp}.zip"',
+                             **_ai_prompt_header(prompt)})
 
 
 @app.get("/api/export", dependencies=[Depends(auth)])

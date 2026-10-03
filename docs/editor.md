@@ -31,7 +31,9 @@ página estática) e `Dockerfile` na raiz.
   paredes w1… e aberturas o1… numeradas), `planta.json` (só paredes e
   aberturas, em pixels de `planta.png`), `LEIA-ME.md` (o que é parede, porta
   e janela, as convenções de eixo, espessura e vão, e um exemplo de
-  resposta), `PROMPT.txt` (o pedido pronto para colar no chat) e `conferir.py`
+  resposta), `PROMPT.txt` (o pedido pronto para colar no chat; o modal do
+  download também mostra esse texto com um botão "Copiar texto", vindo no
+  cabeçalho `X-AI-Prompt` da resposta) e `conferir.py`
   (desenha a resposta sobre a planta, para o modelo conferir antes de
   entregar) e `recortes/` (a planta em pedaços de 700 px com 15% de
   sobreposição, ampliados 2x, com grade das coordenadas originais a cada
