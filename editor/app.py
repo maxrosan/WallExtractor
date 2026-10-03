@@ -463,13 +463,54 @@ def _ai_overlay(img: Image.Image, plan: dict) -> Image.Image:
     return out
 
 
-@app.get("/api/plans/{pid}/ai", dependencies=[Depends(auth)])
-def ai_package(pid: str):
-    """Zip for asking a vision model (Claude, ChatGPT...) to correct a plan: image, numbered overlay,
-    trimmed annotation, instructions, a ready prompt and a script that draws the answer for checking."""
-    row = store.get(pid)
-    if row is None or not os.path.isfile(store.render_path(pid)):
-        raise HTTPException(404)
+AI_BATCH_README = """# Lote de plantas para correção com IA
+
+Este zip tem {n} plantas, uma por pasta. Cada pasta é um pacote completo e independente, com o seu
+próprio `LEIA-ME.md` (regras de anotação e formato), `planta.png`, `planta_numerada.png`,
+`planta.json`, `recortes/` e `conferir.py`.
+
+| Pasta | plan_id | Imagem |
+|---|---|---|
+{rows}
+
+## Como trabalhar
+
+1. Leia o `LEIA-ME.md` de uma das pastas: as regras são as mesmas para todas as plantas.
+2. Para CADA pasta, em ordem, sem pedir confirmação entre uma e outra: corrija a planta seguindo o
+   `LEIA-ME.md` dela (use os `recortes/` para ler as coordenadas e o `conferir.py` para conferir) e
+   grave o resultado em `correcoes/<plan_id>.json`, no formato do `correcao.json` do LEIA-ME
+   (com o `plan_id` e a `image` daquela planta). Depois de cada planta, acrescente uma linha em
+   `correcoes/progresso.txt`: `<plan_id> ok` ou `<plan_id> pulada: <motivo>`.
+3. Coordenadas sempre em pixels da `planta.png` da própria pasta.
+4. No fim, junte tudo num único `correcoes.json`, um objeto com uma chave por planta:
+   `{{"<plan_id>": {{"plan_id": ..., "image": ..., "walls": [...], "openings": [...], "notas": "..."}}, ...}}`,
+   e entregue `correcoes.json` (e, se puder, `correcoes.zip` com a pasta `correcoes/`).
+5. Se a sessão for interrompida ou o limite de tempo acabar, entregue o que já tiver em
+   `correcoes.json`. Quando eu disser "continue", retome pela primeira planta que ainda não tem
+   arquivo em `correcoes/` (confira em `progresso.txt`).
+
+No editor, "Importar lote" aceita o `correcoes.json` ou os vários `<plan_id>.json` de uma vez; cada
+correção entra como rascunho na sua planta, para revisão.
+"""
+
+AI_BATCH_PROMPT = """Anexei um zip com {n} plantas baixas para corrigir, uma por pasta. Descompacte e siga o
+LEIA-ME_LOTE.md da raiz: corrija cada planta seguindo o LEIA-ME.md da pasta dela, uma depois da outra, sem
+me pedir confirmação entre elas, gravando correcoes/<plan_id>.json e anotando correcoes/progresso.txt. No fim,
+me entregue correcoes.json com todas as correções (uma chave por plan_id). Se o tempo acabar antes, entregue o
+que já tiver; quando eu disser "continue", retome pela primeira planta sem arquivo em correcoes/.
+"""
+
+AI_BATCH_MAX = 40
+
+
+def _safe(title: str, pid: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:60] or pid
+
+
+def _ai_files(row: dict) -> list:
+    """The files of one plan's package as [(name, bytes)]: image, numbered overlay, trimmed annotation,
+    instructions, a ready prompt, the checking script and the grid tiles."""
+    pid = row["id"]
     img = Image.open(store.render_path(pid)).convert("RGB")
     plan = _ai_plan(row["corrected"] or row["machine"], pid, row["title"], img.size)
     ppm = plan["scale"].get("px_per_m")
@@ -477,21 +518,62 @@ def ai_package(pid: str):
     fmt = dict(w=img.size[0], h=img.size[1], pid=pid, zoom=2, step=50,
                scale=f"{ppm:.2f} px por metro (paredes costumam ter 0,10 a 0,25 m)" if ppm else "desconhecida",
                tiles="\n".join(f"  - `{n}`: x de {b[0]} a {b[2]}, y de {b[1]} a {b[3]}" for n, _p, b in tiles))
+    files = []
+    for name, im in (("planta.png", img), ("planta_numerada.png", _ai_overlay(img, plan))):
+        b = io.BytesIO()
+        im.save(b, "PNG", compress_level=6)
+        files.append((name, b.getvalue()))
+    files += [("planta.json", json.dumps(plan, ensure_ascii=False, indent=1).encode("utf-8")),
+              ("LEIA-ME.md", AI_README.format(**fmt).encode("utf-8")),
+              ("PROMPT.txt", AI_PROMPT.format(**fmt).encode("utf-8")),
+              ("conferir.py", AI_CHECK.encode("utf-8"))]
+    files += [(name, png) for name, png, _box in tiles]
+    return files
+
+
+@app.get("/api/plans/{pid}/ai", dependencies=[Depends(auth)])
+def ai_package(pid: str):
+    """Zip for asking a vision model (Claude, ChatGPT...) to correct one plan."""
+    row = store.get(pid)
+    if row is None or not os.path.isfile(store.render_path(pid)):
+        raise HTTPException(404)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for name, im in (("planta.png", img), ("planta_numerada.png", _ai_overlay(img, plan))):
-            b = io.BytesIO()
-            im.save(b, "PNG", compress_level=6)
-            z.writestr(name, b.getvalue())
-        z.writestr("planta.json", json.dumps(plan, ensure_ascii=False, indent=1))
-        z.writestr("LEIA-ME.md", AI_README.format(**fmt))
-        z.writestr("PROMPT.txt", AI_PROMPT.format(**fmt))
-        z.writestr("conferir.py", AI_CHECK)
-        for name, png, _box in tiles:
-            z.writestr(name, png)
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in row["title"])[:60] or pid
+        for name, data in _ai_files(row):
+            z.writestr(name, data)
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="ia_{safe}.zip"'})
+                    headers={"Content-Disposition": f'attachment; filename="ia_{_safe(row["title"], pid)}.zip"'})
+
+
+@app.post("/api/ai/batch", dependencies=[Depends(auth)])
+def ai_batch(body: Dict[str, Any]):
+    """One zip with a full package per plan (one folder each) and batch instructions at the root, for a
+    model to correct the plans one after the other on its own and hand back a single correcoes.json."""
+    ids = [str(i) for i in (body.get("ids") or [])]
+    if not ids:
+        raise HTTPException(422, "nenhuma planta selecionada")
+    if len(ids) > AI_BATCH_MAX:
+        raise HTTPException(422, f"no máximo {AI_BATCH_MAX} plantas por lote")
+    rows = []
+    for pid in ids:
+        row = store.get(pid)
+        if row is None or not os.path.isfile(store.render_path(pid)):
+            raise HTTPException(404, f"planta {pid} não encontrada")
+        rows.append(row)
+    buf = io.BytesIO()
+    table = []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for row in rows:
+            folder = f"{_safe(row['title'], row['id'])}_{row['id']}"
+            for name, data in _ai_files(row):
+                z.writestr(f"{folder}/{name}", data)
+            w, h = Image.open(store.render_path(row["id"])).size
+            table.append(f"| `{folder}/` | {row['id']} | {w} x {h} |")
+        z.writestr("LEIA-ME_LOTE.md", AI_BATCH_README.format(n=len(rows), rows="\n".join(table)))
+        z.writestr("PROMPT_LOTE.txt", AI_BATCH_PROMPT.format(n=len(rows)))
+    stamp = __import__("time").strftime("%Y%m%d-%H%M")
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="ia_lote_{len(rows)}_plantas_{stamp}.zip"'})
 
 
 @app.get("/api/export", dependencies=[Depends(auth)])

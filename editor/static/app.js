@@ -10,7 +10,7 @@ const S = {
   token: localStorage.getItem("we_token") || "",
   filter: "pending", plans: [], pid: null, row: null, plan: null, prims: [],
   tool: "select", sel: null, undo: [], redo: [], dirty: false, saveTimer: null,
-  draw: null, calib: null, grid: null, showPrims: false, snap: true, clip: null,
+  draw: null, calib: null, grid: null, showPrims: false, snap: true, clip: null, picked: new Set(),
 };
 const COLORS = { wall: "rgba(192,57,43,0.55)", wallSel: "rgba(192,57,43,0.85)", door: "rgba(46,139,87,0.8)", window: "rgba(59,111,217,0.8)",
   handle: "#2457A6", snap: "#B7791F", prim: "rgba(36,87,166,0.35)", prim0: "rgba(36,87,166,0.18)" };
@@ -510,9 +510,12 @@ $("#title").addEventListener("change", e => { if (S.pid) api(`/plans/${S.pid}/ti
 // ------------------------------------------------------------------ queue + loading
 async function loadQueue() {
   try { S.plans = await api("/plans" + (S.filter ? "?status=" + S.filter : "")); } catch (e) { return; }
-  $("#queue").innerHTML = S.plans.map(p => `<li data-id="${p.id}" class="${p.id === S.pid ? "on" : ""}"><div class="t" title="${esc(p.file)}">${esc(p.title)}</div>
+  $("#queue").innerHTML = S.plans.map(p => `<li data-id="${p.id}" class="${p.id === S.pid ? "on" : ""}"><div class="t" title="${esc(p.file)}"><input type="checkbox" class="pick" data-id="${p.id}" ${S.picked.has(p.id) ? "checked" : ""} title="Selecionar para o lote">${esc(p.title)}</div>
     <div class="m">${p.walls} paredes · ${p.openings} aberturas${p.questions ? " · " + p.questions + " dúvida(s)" : ""} <span class="st ${p.status}">${{ pending: "pendente", corrected: "corrigida", skipped: "pulada" }[p.status]}</span></div></li>`).join("") || "<li class='muted small'>Fila vazia.</li>";
   $$("#queue li[data-id]").forEach(li => li.addEventListener("click", () => openPlan(li.dataset.id)));
+  $$("#queue input.pick").forEach(b => { b.addEventListener("click", e => e.stopPropagation());
+    b.addEventListener("change", () => { if (b.checked) S.picked.add(b.dataset.id); else S.picked.delete(b.dataset.id); pickedUpdate(); }); });
+  pickedUpdate();
 }
 $$(".filters button").forEach(b => b.addEventListener("click", () => { S.filter = b.dataset.f; $$(".filters button").forEach(x => x.classList.toggle("on", x === b)); loadQueue(); }));
 
@@ -534,33 +537,32 @@ async function markStatus(status) {
 }
 // ------------------------------------------------------------------ AI help (Claude, ChatGPT...): package out, correction in
 function aiStatus(t, cls) { const el = $("#ai-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
-// The package takes a few seconds: a modal shows each step (save, build on the server, receive with progress)
-// and ends with a real "Baixar" link, so the download never depends on a script click the browser may drop.
+// A package takes a few seconds (a batch, longer): a modal shows each step (save, build on the server, receive with
+// progress) and ends with a real "Baixar" link, so the download never depends on a script click the browser may drop.
 const AI = { url: null };
 function aiStep(name, state, extra) {
   const li = $(`#ai-steps li[data-step="${name}"]`); li.className = state || "";
   if (extra !== undefined) { const x = $("[data-extra]", li); if (x) x.textContent = extra; }
 }
-function aiFail(step, msg) { aiStep(step, "fail"); const e = $("#ai-err"); e.textContent = "Falhou: " + msg; e.hidden = false; aiStatus("Falhou: " + msg, "err"); }
+function aiFail(step, msg) { aiStep(step, "fail"); const e = $("#ai-err"); e.textContent = "Falhou: " + msg; e.hidden = false; }
 $("#ai-close").addEventListener("click", () => { $("#ai-modal").hidden = true; });
-$("#ai-get").addEventListener("click", async () => {
-  if (!S.pid) { aiStatus("Abra uma planta da fila primeiro.", "err"); return; }
-  const pid = S.pid;
+async function aiDownload(title, url, opts, fallbackName, nextSteps) {
   if (AI.url) { URL.revokeObjectURL(AI.url); AI.url = null; }
+  $("#ai-title").textContent = title; $("#ai-next").innerHTML = nextSteps;
   $$("#ai-steps li").forEach(li => { li.className = ""; const x = $("[data-extra]", li); if (x) x.textContent = ""; });
   $("#ai-ready").hidden = true; $("#ai-err").hidden = true; $("#ai-modal").hidden = false;
-  // 1. save
-  if (S.dirty) { aiStep("save", "active"); await save(); if (S.dirty) return aiFail("save", "não consegui salvar a planta"); aiStep("save", "done"); }
-  else aiStep("save", "done", "");
+  // 1. save the open plan, so the package carries the last edits
+  if (S.dirty) { aiStep("save", "active"); await save(); if (S.dirty) { aiFail("save", "não consegui salvar a planta aberta"); return null; } }
+  aiStep("save", "done", "");
   // 2. build: the server answers only when the zip is ready
   aiStep("build", "active", "0 s"); const t0 = Date.now();
   const tick = setInterval(() => aiStep("build", "active", `${Math.round((Date.now() - t0) / 1000)} s`), 500);
   let r;
-  try { r = await fetch(`/api/plans/${pid}/ai`, { headers: { "X-Token": S.token } }); }
-  catch (err) { clearInterval(tick); return aiFail("build", "sem conexão com o servidor"); }
+  try { r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ "X-Token": S.token }, (opts && opts.headers) || {}) })); }
+  catch (err) { clearInterval(tick); aiFail("build", "sem conexão com o servidor"); return null; }
   clearInterval(tick);
-  if (r.status === 401) { askToken(); return aiFail("build", "token inválido"); }
-  if (!r.ok) return aiFail("build", `o servidor respondeu ${r.status}`);
+  if (r.status === 401) { askToken(); aiFail("build", "token inválido"); return null; }
+  if (!r.ok) { let d = ""; try { d = (await r.json()).detail; } catch (e) {} aiFail("build", d || `o servidor respondeu ${r.status}`); return null; }
   aiStep("build", "done", `${((Date.now() - t0) / 1000).toFixed(1)} s`);
   // 3. receive, with progress when the size is known
   aiStep("recv", "active"); const total = Number(r.headers.get("content-length")) || 0; const parts = []; let got = 0;
@@ -568,23 +570,32 @@ $("#ai-get").addEventListener("click", async () => {
     const reader = r.body.getReader();
     for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length;
       aiStep("recv", "active", total ? `${Math.round(100 * got / total)}%` : `${Math.round(got / 1024)} KB`); }
-  } catch (err) { return aiFail("recv", "a conexão caiu durante o download"); }
-  aiStep("recv", "done", `${Math.round(got / 1024)} KB`);
+  } catch (err) { aiFail("recv", "a conexão caiu durante o download"); return null; }
+  aiStep("recv", "done", got > 2 * 1024 * 1024 ? `${(got / 1048576).toFixed(1)} MB` : `${Math.round(got / 1024)} KB`);
   // 4. ready
-  const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `ia_${pid}.zip`;
+  const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || fallbackName;
   AI.url = URL.createObjectURL(new Blob(parts, { type: "application/zip" }));
   const a = $("#ai-dl"); a.href = AI.url; a.download = name; a.textContent = `Baixar ${name}`;
   aiStep("done", "done"); $("#ai-ready").hidden = false; a.focus();
-  aiStatus(`Pacote ${name} pronto. Envie à IA com o PROMPT.txt e importe o correcao.json (ou cole a resposta).`);
+  return name;
+}
+$("#ai-get").addEventListener("click", async () => {
+  if (!S.pid) { aiStatus("Abra uma planta da fila primeiro.", "err"); return; }
+  const name = await aiDownload("Pacote para a IA", `/api/plans/${S.pid}/ai`, {}, `ia_${S.pid}.zip`,
+    `Próximos passos: envie o zip ao Claude ou ao ChatGPT com o texto do <span class="mono">PROMPT.txt</span>
+     (se o chat não abrir zip, descompacte e anexe os arquivos). Depois use <b>Importar correção</b> (arquivo) ou
+     <b>Colar resposta</b> (texto do chat).`);
+  if (name) aiStatus(`Pacote ${name} pronto. Envie à IA com o PROMPT.txt e importe o correcao.json (ou cole a resposta).`);
 });
-// Models answer in slightly different shapes; accept the reasonable ones. Text: a ```json fence or the outermost {...}.
+
+// Models answer in slightly different shapes; accept the reasonable ones. Text: a ```json fence or the outermost {...}/[...].
 function parseAnswer(text) {
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
-  let body = fence ? fence[1] : text;
-  const i = body.indexOf("{"), j = body.lastIndexOf("}");
-  if (i < 0 || j < i) throw new Error("não achei um objeto JSON no texto");
-  body = body.slice(i, j + 1);
-  try { return JSON.parse(body); } catch (e) { throw new Error("JSON inválido: " + e.message); }
+  let body = (fence ? fence[1] : text).trim();
+  const open = body.search(/[{[]/); if (open < 0) throw new Error("não achei JSON no texto");
+  const close = body[open] === "[" ? body.lastIndexOf("]") : body.lastIndexOf("}");
+  if (close < open) throw new Error("não achei JSON no texto");
+  try { return JSON.parse(body.slice(open, close + 1)); } catch (e) { throw new Error("JSON inválido: " + e.message); }
 }
 // a segment as {start, end} | {x1, y1, x2, y2} | [x1, y1, x2, y2(, t)] | {p1/a, p2/b}
 function segOf(x) {
@@ -598,21 +609,21 @@ function typeOf(o, bucket) {
   if (/^(window|janela|j)/.test(t) || /^j\d/i.test(String(o && o.code || ""))) return "window";
   return "door";
 }
-// The correction replaces walls and openings (scale, codes and source stay); ids are made unique, openings whose
-// wall is unknown are linked by geometry, and a different image size is rescaled. Ctrl+Z restores the previous one.
-function importPlan(d) {
+function planMedianT(plan) { const t = plan.walls.map(w => w.thickness).sort((a, b) => a - b); if (t.length) return t[t.length >> 1];
+  const m = plan.scale && plan.scale.px_per_m; return m ? 0.13 * m : 8; }
+function looksLikePlan(d) { return d && typeof d === "object" && !Array.isArray(d) && (d.walls || d.paredes || d.correcao || d.plan); }
+// One answer -> walls and openings in the pixels of `plan` (a different image size is rescaled; ids made unique).
+function normalizeAnswer(d, plan) {
   if (d && !d.walls && (d.paredes || d.correcao || d.plan)) d = d.correcao || d.plan || { ...d, walls: d.paredes, openings: d.aberturas };
   const rawOpen = d && (d.openings || d.aberturas ||
     (d.doors || d.windows ? [...(d.doors || []).map(x => ({ x, b: "door" })), ...(d.windows || []).map(x => ({ x, b: "window" }))] : null));
   if (!d || !Array.isArray(d.walls) || !Array.isArray(rawOpen)) throw new Error("a resposta precisa ter walls e openings");
-  if (d.plan_id && d.plan_id !== S.pid && !confirm(`Esta resposta é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return null;
-  const k = d.image && Number(d.image.width) > 0 ? S.plan.image.width / Number(d.image.width) : 1;
+  const k = d.image && Number(d.image.width) > 0 ? plan.image.width / Number(d.image.width) : 1;
   const pt = p => { if (!Array.isArray(p) || p.length < 2 || !isFinite(p[0]) || !isFinite(p[1])) throw new Error("ponto inválido: " + JSON.stringify(p)); return [Number(p[0]) * k, Number(p[1]) * k]; };
-  const walls = [], ids = new Map();
+  const walls = [], ids = new Map(), tDefault = planMedianT(plan);
   for (const w of d.walls) {
     const sg = segOf(w); const id = nextId("w", walls); if (w && w.id !== undefined) ids.set(String(w.id), id);
-    const t = Number(sg.t) > 0 ? Number(sg.t) * k : medianThickness();
-    walls.push({ id, start: pt(sg.start), end: pt(sg.end), thickness: t, kind: (w && w.kind) || null, polygon: null });
+    walls.push({ id, start: pt(sg.start), end: pt(sg.end), thickness: Number(sg.t) > 0 ? Number(sg.t) * k : tDefault, kind: (w && w.kind) || null, polygon: null });
   }
   const openings = [];
   for (const item of rawOpen) {
@@ -625,25 +636,35 @@ function importPlan(d) {
   }
   return { walls, openings, notes: d.notas || d.notes || null };
 }
-// Checks on an imported answer, as warnings only (the reviewer decides): a wall running across an opening,
-// an opening with no wall on its line, slightly tilted segments in an orthogonal drawing, points off the image,
-// tiny walls. Ids are the ones on screen after the import.
-function importWarnings() {
-  const out = [], W = S.plan.image.width, H = S.plan.image.height, t = medianThickness();
+// Opening with no (known) wall: link it to the wall on whose line it lies, as on the canvas, and put it on that line.
+function linkOpening(plan, o) {
+  const mid = [(o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2]; const L = dist(o.start, o.end) || 1e-9;
+  const ox = (o.end[0] - o.start[0]) / L, oy = (o.end[1] - o.start[1]) / L; let best = null;
+  for (const w of plan.walls) { const { ux, uy, L: wl } = axis(w); const band = Math.max(6, w.thickness);
+    if (Math.abs(ox * ux + oy * uy) < Math.cos(5 * Math.PI / 180)) continue;
+    const d = perpDist(w, mid); if (d > band) continue;
+    const t0 = proj(w, o.start), t1 = proj(w, o.end), apart = Math.max(0, Math.min(t0, t1) - wl, -Math.max(t0, t1)); if (apart > band) continue;
+    if (!best || d + apart < best.d + best.apart) best = { w, d, apart }; }
+  if (!best) { o.wall_id = null; return; }
+  const w = best.w; o.wall_id = w.id; o.start = atT(w, proj(w, o.start)); o.end = atT(w, proj(w, o.end)); o.width = dist(o.start, o.end);
+}
+// Checks on an imported answer, as warnings only (the reviewer decides).
+function planWarnings(plan) {
+  const out = [], W = plan.image.width, H = plan.image.height, t = planMedianT(plan);
   const off = p => p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H;
   const tilt = x => { const dx = Math.abs(x.end[0] - x.start[0]), dy = Math.abs(x.end[1] - x.start[1]);
     const a = Math.atan2(Math.min(dx, dy), Math.max(dx, dy)) * 180 / Math.PI; return a > 0.5 && a < 10 ? a : 0; };
-  for (const w of S.plan.walls) {
+  for (const w of plan.walls) {
     if (off(w.start) || off(w.end)) out.push(`parede ${w.id} fora da imagem`);
     const a = tilt(w); if (a) out.push(`parede ${w.id} torta (${a.toFixed(1)}°)`);
     if (dist(w.start, w.end) < 0.5 * t) out.push(`parede ${w.id} muito curta (${Math.round(dist(w.start, w.end))} px)`);
   }
-  for (const o of S.plan.openings) {
+  for (const o of plan.openings) {
     if (off(o.start) || off(o.end)) out.push(`abertura ${o.id} fora da imagem`);
     const a = tilt(o); if (a) out.push(`abertura ${o.id} torta (${a.toFixed(1)}°)`);
     if (!o.wall_id) out.push(`abertura ${o.id} sem parede na sua linha`);
     const L = dist(o.start, o.end) || 1e-9, ux = (o.end[0] - o.start[0]) / L, uy = (o.end[1] - o.start[1]) / L;
-    for (const w of S.plan.walls) {
+    for (const w of plan.walls) {
       const ax = axis(w); if (Math.abs(ux * ax.ux + uy * ax.uy) < Math.cos(5 * Math.PI / 180)) continue;
       if (perpDist(w, [(o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2]) > Math.max(3, w.thickness / 2)) continue;
       const t0 = proj(w, o.start), t1 = proj(w, o.end), lo = Math.min(t0, t1), hi = Math.max(t0, t1);
@@ -653,28 +674,92 @@ function importWarnings() {
   }
   return out;
 }
-function applyImport(got, from) {
+function warnHtml(warn) {
+  return warn.length ? `<div class="warn-list"><b>${warn.length} aviso(s) para conferir:</b><ul>${warn.slice(0, 12).map(w => `<li>${esc(w)}</li>`).join("")}` +
+    `${warn.length > 12 ? `<li>… e mais ${warn.length - 12}</li>` : ""}</ul></div>` : "";
+}
+function importOpen(d, from) {
+  if (looksLikePlan(d) && d.plan_id && d.plan_id !== S.pid &&
+      !confirm(`Esta resposta é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return;
+  if (!looksLikePlan(d)) { const mine = batchEntries(d, from).find(e => e.pid === S.pid); if (!mine) throw new Error("a resposta não tem walls e openings (para várias plantas use Importar lote)"); d = mine.d; }
+  const got = normalizeAnswer(d, S.plan);
   pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
-  for (const o of S.plan.openings) if (!o.wall_id) attachOpening(o);  // needs the new walls in place
+  for (const o of S.plan.openings) if (!o.wall_id) linkOpening(S.plan, o);
   S.sel = null; changed();
-  const warn = importWarnings();
-  const el = $("#ai-status"); el.className = "small";
+  const warn = planWarnings(S.plan); const el = $("#ai-status"); el.className = "small";
   el.innerHTML = `Importado ${esc(from)}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` +
-    (got.notes ? `<br>Notas da IA: ${esc(got.notes)}` : "") +
-    (warn.length ? `<div class="warn-list"><b>${warn.length} aviso(s) para conferir:</b><ul>${warn.slice(0, 12).map(w => `<li>${esc(w)}</li>`).join("")}` +
-      `${warn.length > 12 ? `<li>… e mais ${warn.length - 12}</li>` : ""}</ul></div>` : `<br>Nenhum aviso na verificação automática.`);
+    (got.notes ? `<br>Notas da IA: ${esc(got.notes)}` : "") + (warn.length ? warnHtml(warn) : `<br>Nenhum aviso na verificação automática.`);
 }
 $("#ai-put").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;
-  try { const got = importPlan(parseAnswer(await f.text())); if (got) applyImport(got, f.name); }
-  catch (err) { aiStatus("Não importado: " + err.message, "err"); }
+  try { importOpen(parseAnswer(await f.text()), f.name); } catch (err) { aiStatus("Não importado: " + err.message, "err"); }
 });
 $("#ai-paste").addEventListener("click", () => { if (!S.pid) return; $("#paste-text").value = ""; $("#paste-modal").hidden = false; $("#paste-text").focus(); });
 $("#paste-cancel").addEventListener("click", () => { $("#paste-modal").hidden = true; });
 $("#paste-ok").addEventListener("click", () => {
-  try { const got = importPlan(parseAnswer($("#paste-text").value)); $("#paste-modal").hidden = true; if (got) applyImport(got, "texto colado"); }
-  catch (err) { $("#paste-modal").hidden = true; aiStatus("Não importado: " + err.message, "err"); }
+  $("#paste-modal").hidden = true;
+  try { importOpen(parseAnswer($("#paste-text").value), "texto colado"); } catch (err) { aiStatus("Não importado: " + err.message, "err"); }
 });
+
+// ------------------------------------------------------------------ batches: several plans out, several corrections in
+function pickedUpdate() {
+  const n = S.picked.size; $("#batch-get").textContent = `Baixar lote para IA (${n})`; $("#batch-get").disabled = !n;
+  const boxes = $$("#queue input.pick"); $("#pick-all").checked = boxes.length > 0 && boxes.every(b => b.checked);
+}
+$("#pick-all").addEventListener("change", e => { for (const b of $$("#queue input.pick")) { b.checked = e.target.checked;
+  if (b.checked) S.picked.add(b.dataset.id); else S.picked.delete(b.dataset.id); } pickedUpdate(); });
+$("#batch-get").addEventListener("click", async () => {
+  const ids = [...S.picked]; if (!ids.length) return;
+  const name = await aiDownload(`Lote de ${ids.length} planta(s) para a IA`, "/api/ai/batch",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) }, "ia_lote.zip",
+    `Próximos passos: envie o zip ao ChatGPT ou ao Claude com o texto do <span class="mono">PROMPT_LOTE.txt</span> (na raiz do zip).
+     A IA corrige uma planta depois da outra e devolve <span class="mono">correcoes.json</span>; se parar no meio, diga "continue".
+     Depois use <b>Importar lote</b> aqui na fila.`);
+  if (name) $("#batch-status").textContent = `Lote ${name} pronto.`;
+});
+// The answers of a batch: one combined object {plan_id: correction}, a list of corrections with plan_id, or one
+// correction per file (plan_id inside, or in the file name as correcoes/<plan_id>.json).
+function batchEntries(d, fname) {
+  const fromName = (/([0-9a-f]{10})/.exec(fname || "") || [])[1];
+  if (Array.isArray(d)) return d.map(x => ({ pid: x && x.plan_id, d: x }));
+  if (looksLikePlan(d)) return [{ pid: d.plan_id || fromName, d }];
+  if (d && typeof d === "object") {
+    const inner = d.correcoes || d.plans || d.plantas; if (inner) return batchEntries(inner, fname);
+    return Object.entries(d).filter(([, v]) => looksLikePlan(v)).map(([k, v]) => v.plan_id && v.plan_id !== k
+      ? { pid: k, d: v, err: `a chave ${k} e o plan_id ${v.plan_id} de dentro não batem` } : { pid: k, d: v });
+  }
+  return [];
+}
+$("#batch-put").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+  if (S.dirty) await save();
+  const res = $("#batch-result"); $("#batch-modal").hidden = false; res.innerHTML = "<p class='small muted'>Lendo os arquivos…</p>";
+  const entries = [];
+  for (const f of files) { try { for (const x of batchEntries(parseAnswer(await f.text()), f.name)) entries.push({ ...x, file: f.name }); }
+    catch (err) { entries.push({ pid: null, file: f.name, err: err.message }); } }
+  const rows = []; let ok = 0; const seen = new Set();
+  for (const x of entries) if (!x.err && x.pid) { if (seen.has(x.pid)) x.err = "planta repetida no lote (ficou a primeira)"; seen.add(x.pid); }
+  for (const [i, x] of entries.entries()) {
+    res.innerHTML = `<p class='small muted'>Importando ${i + 1}/${entries.length}…</p>`;
+    const head = `<b>${esc(x.pid || "?")}</b> <span class="muted">(${esc(x.file)})</span>`;
+    if (x.err) { rows.push(`<li class="err">${head}: ${esc(x.err)}</li>`); continue; }
+    if (!x.pid) { rows.push(`<li class="err">${head}: sem plan_id</li>`); continue; }
+    try {
+      const row = await api(`/plans/${x.pid}`); const plan = row.corrected || JSON.parse(JSON.stringify(row.machine));
+      const got = normalizeAnswer(x.d, plan); plan.walls = got.walls; plan.openings = got.openings;
+      for (const o of plan.openings) if (!o.wall_id) linkOpening(plan, o);
+      await api(`/plans/${x.pid}/annotation`, { method: "PUT", json: plan }); ok++;
+      const warn = planWarnings(plan);
+      rows.push(`<li>${head} ${esc(row.title)}: ${got.walls.length} paredes, ${got.openings.length} aberturas` +
+        (got.notes ? `<div class="small muted">Notas: ${esc(got.notes)}</div>` : "") + warnHtml(warn) + `</li>`);
+    } catch (err) { rows.push(`<li class="err">${head}: ${esc(err.message === "Not Found" ? "planta não está no editor" : err.message)}</li>`); }
+  }
+  res.innerHTML = `<p><b>${ok} de ${entries.length}</b> correção(ões) importada(s) como rascunho. As plantas continuam pendentes:
+    abra cada uma, confira e marque como corrigida.</p><ul class="batch-list">${rows.join("")}</ul>`;
+  $("#batch-status").textContent = `${ok} correção(ões) importada(s).`;
+  await loadQueue(); if (S.pid && entries.some(x => x.pid === S.pid)) openPlan(S.pid);
+});
+$("#batch-close").addEventListener("click", () => { $("#batch-modal").hidden = true; });
 
 $("#mark-corrected").addEventListener("click", () => markStatus("corrected"));
 $("#mark-skip").addEventListener("click", () => markStatus("skipped"));

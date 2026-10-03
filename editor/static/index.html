@@ -15,6 +15,13 @@
       <button data-f="corrected">Corrigidas</button>
       <button data-f="">Todas</button>
     </div>
+    <div class="batch-bar">
+      <label class="chk" title="Marcar ou desmarcar todas as plantas da lista"><input type="checkbox" id="pick-all"> todas</label>
+      <button id="batch-get" disabled title="Um zip com o pacote de cada planta marcada e o prompt do lote">Baixar lote para IA (0)</button>
+      <label class="btn-like" title="O correcoes.json da IA, ou vários .json de uma vez; cada correção entra como rascunho na sua planta">
+        <input type="file" id="batch-put" accept=".json,.txt,application/json,text/plain" multiple hidden>Importar lote</label>
+      <div id="batch-status" class="muted small"></div>
+    </div>
     <ul id="queue" class="queue"></ul>
     <label class="upload">
       <input type="file" id="upload" accept="application/pdf" multiple hidden>
@@ -140,7 +147,7 @@
 
 <div id="ai-modal" class="modal" hidden>
   <div class="modal-box wide">
-    <h3>Pacote para a IA</h3>
+    <h3 id="ai-title">Pacote para a IA</h3>
     <ol id="ai-steps" class="steps">
       <li data-step="save">Salvando as alterações da planta</li>
       <li data-step="build">Preparando o pacote no servidor (imagem, planta numerada, instruções) <span class="mono muted" data-extra></span></li>
@@ -149,12 +156,18 @@
     </ol>
     <div id="ai-ready" hidden>
       <a id="ai-dl" class="btn-big primary" download>Baixar</a>
-      <div class="small">Próximos passos: envie o zip ao Claude ou ao ChatGPT com o texto do <span class="mono">PROMPT.txt</span>
-        (se o chat não abrir zip, descompacte e anexe os arquivos). Depois use <b>Importar correção</b> (arquivo) ou
-        <b>Colar resposta</b> (texto do chat).</div>
+      <div id="ai-next" class="small"></div>
     </div>
     <div id="ai-err" class="small err" hidden></div>
     <div class="row"><button id="ai-close">Fechar</button></div>
+  </div>
+</div>
+
+<div id="batch-modal" class="modal" hidden>
+  <div class="modal-box wide">
+    <h3>Importar lote</h3>
+    <div id="batch-result" class="small"></div>
+    <div class="row"><button id="batch-close">Fechar</button></div>
   </div>
 </div>
 

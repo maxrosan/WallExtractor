@@ -88,3 +88,10 @@ td button{font-size:11px;padding:2px 6px}
 .btn-big.primary{background:var(--accent);color:var(--accent-ink)}
 .err{color:var(--danger)}
 .warn-list{margin-top:4px;color:var(--warn)}.warn-list ul{margin:2px 0 0;padding-left:16px;max-height:160px;overflow:auto}
+.batch-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.batch-bar button,.batch-bar .btn-like{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:3px 7px;cursor:pointer;color:var(--ink)}
+.batch-bar button:disabled{opacity:.5;cursor:default}
+.batch-bar #batch-status{flex-basis:100%}
+.queue input.pick{margin:0 6px 0 0;vertical-align:middle}
+.batch-list{max-height:55vh;overflow:auto;padding-left:18px}
+.batch-list li{margin-bottom:6px}

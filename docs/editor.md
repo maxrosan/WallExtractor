@@ -48,6 +48,20 @@ página estática) e `Dockerfile` na raiz.
   da importação o painel lista avisos para conferir (parede sobre um vão,
   abertura sem parede na sua linha, segmento levemente torto, ponto fora da
   imagem, parede curta demais); são só alertas, nada é bloqueado.
+- **Lotes para a IA.** Na fila, cada planta tem uma caixa de marcar ("todas"
+  marca a lista do filtro). "Baixar lote para IA" (`POST /api/ai/batch`
+  `{"ids": [...]}`, até 40 plantas) baixa um zip com uma pasta
+  `<título>_<id>/` por planta, cada uma com o pacote completo, e na raiz
+  `PROMPT_LOTE.txt` e `LEIA-ME_LOTE.md`: a IA corrige uma planta depois da
+  outra sem pedir confirmação, grava `correcoes/<plan_id>.json` e
+  `correcoes/progresso.txt`, entrega `correcoes.json` (`{"<plan_id>": correção}`)
+  e, se for interrompida, retoma com "continue". "Importar lote" aceita o
+  `correcoes.json`, uma lista de correções com `plan_id` ou vários `.json`
+  (o `plan_id` vem de dentro ou do nome do arquivo); cada correção entra como
+  rascunho na sua planta, que continua pendente, e um resumo lista planta a
+  planta o que entrou, as notas da IA e os avisos. Chave e `plan_id`
+  divergentes, planta repetida no lote e planta que não está no editor
+  aparecem como erro, sem importar.
 - **Exportação para treino.** `GET /api/export?status=corrected` devolve um
   zip com `<id>.png` (lado maior 1024 px) e `<id>.json` (WallPlan nas
   coordenadas dessa imagem, com metros). `scripts/fetch_corrections.py` baixa
