@@ -178,10 +178,11 @@ consomem o mesmo JSON.
 
 ## Estado (2026-10-03)
 
-- PR #1 (`claude/jolly-brown-ij69cl` → `main`) já integrado na `main`
-  (merge `e1c8cc1`). Desde 2026-10-03 o EasyPanel constrói da `main`
-  (no ar: `e1c8cc1`), então a branch antiga pode ser apagada.
-- Fila do editor: 33 plantas, todas corrigidas (4 de escritório, 29 de SJC).
+- `main` = `claude/vector-false-doors` (V3, Qwen, botão do Claude), publicada
+  no EasyPanel em 2026-10-03 (commit `d369760`). A branch
+  `claude/jolly-brown-ij69cl` pode ser apagada.
+- Fila do editor: 33 plantas corrigidas (4 de escritório, 29 de SJC) e 17
+  pendentes do portfólio de SJC (raster, recortadas na planta).
   Cópia local em `data/gt` (`eval_openings.py --download`).
 - Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas,
   gabarito limpo): portas 167/179 com 11 falsas (F1 0,94), janelas 142/167
