@@ -68,7 +68,8 @@ python -m wallextractor.train_seg --data data/prepared --extra-train data/prepar
 python -m wallextractor.eval_seg --model runs/b1/best --data data/prepared --split val --styles solid,hatch45,outline
 
 # Qwen3-VL (GPU): dados, treino LoRA, avaliação (base sem --adapter = zero-shot)
-python -m wallextractor.vlm_data --cubicasa data/prepared --corrections data/prepared_corr --out data/vlm     --side 1024 --repeat-corr 20 --restyle-prob 0.5
+python -m wallextractor.vlm_data --cubicasa data/prepared --corrections data/prepared_corr --out data/vlm \
+    --side 1024 --repeat-corr 20 --restyle-prob 0.5
 python -m wallextractor.train_vlm --data data/vlm --out runs/vlm4b --epochs 2 --grad-accum 8
 python -m wallextractor.eval_vlm --data data/vlm --adapter runs/vlm4b/best --source editor --out runs/vlm4b/eval.json
 
