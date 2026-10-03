@@ -1,0 +1,1126 @@
+"""Walls from vector PDFs of architectural drawings (Brazilian CAD exports).
+
+Observed convention (NBR 8403 pen weights, confirmed on real project PDFs):
+walls in section are drawn with the thickest pen as double-line outlines;
+door/window frames use a thinner pen; text, dimensions and furniture are
+thinner still. The wall mass is therefore recovered by
+
+1. locating the floor-plan drawing on the sheet (label "PLANTA BAIXA" or
+   the densest cluster of thick-pen segments),
+2. reading the scale from the "ESC. 1:75" style label near the drawing,
+3. keeping the segments of the thickest pen inside that region,
+4. pairing parallel segments whose distance is a plausible wall thickness
+   (8 to 40 cm) and emitting the mid-line of their overlap as a wall.
+
+Coordinates are PDF points on the page; the caller converts to pixels.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+try:
+    import pymupdf as fitz
+except ImportError:  # pragma: no cover
+    import fitz
+
+from .schema import Opening, Wall
+
+Point = Tuple[float, float]
+PT_PER_M = 2834.6457  # 1 m of drawing at 1:1 in PDF points (72 / 25.4 * 1000)
+
+
+@dataclass
+class Segment:
+    a: Point
+    b: Point
+    width: float
+
+    @property
+    def length(self) -> float:
+        return math.hypot(self.b[0] - self.a[0], self.b[1] - self.a[1])
+
+
+@dataclass
+class PlanRegion:
+    rect: Tuple[float, float, float, float]  # x0, y0, x1, y1 in page points
+    label: Optional[str] = None
+    scale_denominator: Optional[float] = None  # effective scale, 69.2 for a 1:75 sheet plotted at 108%
+    pt_per_m: Optional[float] = None
+    scale_method: Optional[str] = None  # "dimension_text" | "scale_label" | None
+    nominal_scale: Optional[float] = None  # the printed "ESC. 1:N", if any
+    wall_pen_width: Optional[float] = None
+    notes: List[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------- primitives
+def _display_xform(page):
+    """Drawings and words come in unrotated coordinates; page.rect and pixmaps follow /Rotate."""
+    return page.rotation_matrix if page.rotation else None
+
+
+def _xy(m, x: float, y: float) -> Point:
+    if m is None:
+        return (float(x), float(y))
+    p = fitz.Point(x, y) * m
+    return (float(p.x), float(p.y))
+
+
+def page_segments(page, min_width: float = 0.0) -> List[Segment]:
+    """Straight stroked segments of the page (rect edges included), in display page points."""
+    segs: List[Segment] = []
+    page_area = page.rect.width * page.rect.height
+    m = _display_xform(page)
+    for d in page.get_drawings():
+        if d.get("color") is None and d.get("fill") is None:
+            continue
+        w = float(d.get("width") or 0.0)
+        if w < min_width:
+            continue
+        r = fitz.Rect(d["rect"])
+        if r.width * r.height > 0.5 * page_area:
+            continue  # sheet frame / title block border
+        for it in d["items"]:
+            if it[0] == "l":
+                segs.append(Segment(_xy(m, it[1].x, it[1].y), _xy(m, it[2].x, it[2].y), w))
+            elif it[0] == "re":
+                q = it[1]
+                pts = [(q.x0, q.y0), (q.x1, q.y0), (q.x1, q.y1), (q.x0, q.y1)]
+                for i in range(4):
+                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w))
+            elif it[0] == "qu":
+                q = it[1]
+                pts = [(q.ul.x, q.ul.y), (q.ur.x, q.ur.y), (q.lr.x, q.lr.y), (q.ll.x, q.ll.y)]
+                for i in range(4):
+                    segs.append(Segment(_xy(m, *pts[i]), _xy(m, *pts[(i + 1) % 4]), w))
+    return segs
+
+
+def _words(page):
+    """Words as (x0, y0, x1, y1, text) in display page points."""
+    m = _display_xform(page)
+    out = []
+    for w in page.get_text("words"):
+        if m is None:
+            out.append((w[0], w[1], w[2], w[3], w[4]))
+        else:
+            r = fitz.Rect(w[:4]) * m
+            out.append((r.x0, r.y0, r.x1, r.y1, w[4]))
+    return out
+
+
+# ---------------------------------------------------------------- scale
+_SCALE_RE = re.compile(r"1\s*[:/]\s*(\d{1,4})")
+
+
+def scale_from_text(page, near: Optional[Point] = None, max_dist: float = 400.0) -> Optional[float]:
+    """Return the scale denominator N of the nearest 'ESC 1:N' label (or any '1:N' if no label)."""
+    words = _words(page)
+    cands = []
+    for i, w in enumerate(words):
+        m = _SCALE_RE.search(w[4])
+        if not m:
+            # 'ESCALA' then '1:50' as the next word
+            if re.match(r"(?i)^ESC", w[4]) and i + 1 < len(words):
+                m = _SCALE_RE.search(words[i + 1][4])
+                if not m:
+                    continue
+            else:
+                continue
+        n = float(m.group(1))
+        if not (10 <= n <= 2000):
+            continue
+        cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+        dist = math.hypot(cx - near[0], cy - near[1]) if near else 0.0
+        cands.append((dist, n))
+    if not cands:
+        return None
+    cands.sort()
+    if near and cands[0][0] > max_dist:
+        return None
+    return cands[0][1]
+
+
+# ---------------------------------------------------------------- region
+def _clusters(segs: Sequence[Segment], cell: float, page_w: float, page_h: float, dilate: int = 2):
+    """Connected clusters of segments on a coarse grid. Returns list of (bbox, [segment indices])."""
+    nx, ny = int(page_w / cell) + 1, int(page_h / cell) + 1
+    grid = np.zeros((ny, nx), dtype=bool)
+    cell_of: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+    for i, s in enumerate(segs):
+        n = max(2, int(s.length / cell) + 2)
+        for t in np.linspace(0, 1, n):
+            x = s.a[0] + t * (s.b[0] - s.a[0])
+            y = s.a[1] + t * (s.b[1] - s.a[1])
+            cx, cy = min(nx - 1, max(0, int(x / cell))), min(ny - 1, max(0, int(y / cell)))
+            grid[cy, cx] = True
+            cell_of[(cy, cx)].append(i)
+    import cv2
+
+    k = np.ones((2 * dilate + 1, 2 * dilate + 1), np.uint8)
+    dil = cv2.dilate(grid.astype(np.uint8), k)
+    n, labels = cv2.connectedComponents(dil, connectivity=8)
+    members: Dict[int, set] = defaultdict(set)
+    for (cy, cx), idxs in cell_of.items():
+        members[int(labels[cy, cx])].update(idxs)
+    out = []
+    for lab, idxs in members.items():
+        if lab == 0 or not idxs:
+            continue
+        pts = np.array([p for i in idxs for p in (segs[i].a, segs[i].b)])
+        bbox = (float(pts[:, 0].min()), float(pts[:, 1].min()), float(pts[:, 0].max()), float(pts[:, 1].max()))
+        out.append((bbox, sorted(idxs)))
+    return out
+
+
+def wall_pen_width(segs: Sequence[Segment], min_count: int = 10) -> Optional[float]:
+    """Thickest stroke width used by at least ``min_count`` segments."""
+    counts = Counter(round(s.width, 2) for s in segs)
+    for w, c in sorted(counts.items(), reverse=True):
+        if w > 0 and c >= min_count:
+            return w
+    return None
+
+
+def locate_plan_region(page, segs: Optional[List[Segment]] = None, pad_pt: float = 12.0) -> PlanRegion:
+    """Find the floor-plan drawing on the sheet.
+
+    Strategy: take the thickest-pen segments, cluster them spatially and
+    pick the cluster closest to a "PLANTA BAIXA" label (label is normally
+    just below the drawing); without a label, the cluster with the most
+    thick-pen ink wins.
+    """
+    segs = segs if segs is not None else page_segments(page)
+    notes: List[str] = []
+    pen = wall_pen_width(segs)
+    if pen is None:
+        return PlanRegion(rect=tuple(page.rect), notes=["no stroked segments"])
+    thick = [s for s in segs if abs(s.width - pen) < 1e-3 and s.length > 0.5]
+    clusters = _clusters(thick, cell=max(8.0, page.rect.width / 150), page_w=page.rect.width,
+                         page_h=page.rect.height)
+    if not clusters:
+        return PlanRegion(rect=tuple(page.rect), wall_pen_width=pen, notes=["no clusters"])
+
+    words = _words(page)
+    # Every "PLANTA BAIXA" occurrence; the title block repeats it as "PLANTA BAIXA, PLANTA DE COBERTURA, ..."
+    labels: List[Tuple[Point, str, bool]] = []
+    for i, w in enumerate(words):
+        if re.match(r"(?i)^PLANTA$", w[4]) and i + 1 < len(words) and re.match(r"(?i)^BAIXA", words[i + 1][4]):
+            nxt = words[i + 1]
+            pt = ((min(w[0], nxt[0]) + max(w[2], nxt[2])) / 2, (min(w[1], nxt[1]) + max(w[3], nxt[3])) / 2)
+            exact = re.match(r"(?i)^BAIXA[\s\-:]*$", nxt[4]) is not None
+            labels.append((pt, f"{w[4]} {nxt[4]}", exact))
+
+    def ink(c):
+        return sum(thick[i].length for i in c[1])
+
+    def bbox_dist(p, bbox):
+        x0, y0, x1, y1 = bbox
+        return math.hypot(max(x0 - p[0], 0, p[0] - x1), max(y0 - p[1], 0, p[1] - y1))
+
+    best = None
+    label_pt: Optional[Point] = None
+    label_text = None
+    if labels:
+        scored = []
+        for pt, text, exact in labels:
+            for c in clusters:
+                d = bbox_dist(pt, c[0])
+                if d > 300:
+                    continue
+                scored.append((d - 0.05 * ink(c) - (100 if exact else 0), d, pt, text, c))
+        if scored:
+            _, d, label_pt, label_text, best = min(scored, key=lambda z: z[0])
+            notes.append(f"label '{label_text}' at ({label_pt[0]:.0f},{label_pt[1]:.0f}), {d:.0f} pt from drawing")
+    if best is None:
+        best = max(clusters, key=ink)
+        notes.append("no usable PLANTA BAIXA label; densest thick-pen cluster used")
+    x0, y0, x1, y1 = best[0]
+    rect = (max(0.0, x0 - pad_pt), max(0.0, y0 - pad_pt), min(page.rect.width, x1 + pad_pt),
+            min(page.rect.height, y1 + pad_pt))
+    region = PlanRegion(rect=rect, label=label_text, wall_pen_width=pen, notes=notes)
+    anchor = label_pt or ((x0 + x1) / 2, y1)
+    n = scale_from_text(page, near=anchor)
+    consensus = scale_from_dimensions(page, segs, rect, pen, words=words)
+    region.nominal_scale = n
+    if consensus:
+        # Geometry wins: sheets are often plotted "fit to page", so the label is only nominal.
+        region.pt_per_m = consensus[0]
+        region.scale_denominator = PT_PER_M / consensus[0]
+        region.scale_method = "dimension_text"
+        msg = f"scale from {consensus[1]} dimension strings: 1:{region.scale_denominator:.1f}"
+        if n:
+            ratio = (PT_PER_M / n) / consensus[0]
+            msg += f" (label says 1:{n:.0f}; plotted at {100 / ratio:.0f}% of nominal)"
+        region.notes.append(msg)
+    elif n:
+        region.scale_denominator = n
+        region.pt_per_m = PT_PER_M / n
+        region.scale_method = "scale_label"
+        region.notes.append(f"scale from label 1:{n:.0f} (no dimension consensus to confirm)")
+    else:
+        region.notes.append("no scale label and no dimension consensus")
+    return region
+
+
+_DIM_RE = re.compile(r"^\.?\d{1,2}[.,]\d{2}$")
+
+
+def scale_from_dimensions(page, segs: Sequence[Segment], rect, pen: Optional[float], words=None,
+                          max_gap_pt: float = 14.0, min_agree: int = 4, tol: float = 0.04) -> Optional[Tuple[float, int]]:
+    """Estimate pt-per-metre from the dimension strings and their dimension lines.
+
+    A CAD dimension prints the value on a thin line whose length is the
+    measured distance. For every numeric word inside the region, the nearest
+    thin segment with the same orientation whose span covers the text gives
+    one candidate ``length / value`` (collinear pieces split around the text
+    are merged first). The median of the largest group agreeing within
+    ``tol`` is returned with the group size.
+
+    This is the primary scale source: sheets are often plotted "fit to page",
+    so the printed "ESC. 1:75" is nominal while the geometry is at 1:69.
+    """
+    words = words if words is not None else _words(page)
+    x0, y0, x1, y1 = rect
+    m = 40.0
+    thin = [s for s in segs if (pen is None or s.width < pen - 1e-3) and s.length > 3.0
+            and x0 - m <= s.a[0] <= x1 + m and y0 - m <= s.a[1] <= y1 + m]
+    if not thin:
+        return None
+    A = np.array([s.a for s in thin])
+    B = np.array([s.b for s in thin])
+    D = B - A
+    L = np.linalg.norm(D, axis=1)
+    horiz = np.abs(D[:, 0]) >= np.abs(D[:, 1])
+    cands: List[float] = []
+    for w in words:
+        if not _DIM_RE.match(w[4]) or not (x0 - m <= w[0] <= x1 + m and y0 - m <= w[1] <= y1 + m):
+            continue
+        try:
+            val = float(w[4].replace(",", "."))
+        except ValueError:
+            continue
+        if not (0.05 <= val <= 80):
+            continue
+        cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+        text_h = (w[2] - w[0]) >= (w[3] - w[1])
+        text_len = (w[2] - w[0]) if text_h else (w[3] - w[1])
+        sel = np.nonzero(horiz == text_h)[0]
+        if len(sel) == 0:
+            continue
+        if text_h:
+            perp = np.abs(A[sel, 1] - cy)
+            lo, hi = np.minimum(A[sel, 0], B[sel, 0]), np.maximum(A[sel, 0], B[sel, 0])
+            c = cx
+        else:
+            perp = np.abs(A[sel, 0] - cx)
+            lo, hi = np.minimum(A[sel, 1], B[sel, 1]), np.maximum(A[sel, 1], B[sel, 1])
+            c = cy
+        # the line may pass under the text, or be split in two pieces around it
+        near = (perp <= max_gap_pt) & (lo - text_len <= c) & (c <= hi + text_len)
+        if not near.any():
+            continue
+        k = np.argmin(np.where(near, perp, np.inf))
+        # merge collinear pieces (same offset within 0.6 pt, gaps up to 1.5 x text length)
+        coll = near & (np.abs(perp - perp[k]) <= 0.6)
+        span_lo, span_hi = float(lo[k]), float(hi[k])
+        changed = True
+        while changed:
+            changed = False
+            for j in np.nonzero(coll)[0]:
+                if lo[j] < span_lo - 1e-6 and hi[j] >= span_lo - 1.5 * text_len:
+                    span_lo, changed = float(lo[j]), True
+                if hi[j] > span_hi + 1e-6 and lo[j] <= span_hi + 1.5 * text_len:
+                    span_hi, changed = float(hi[j]), True
+        ppm = (span_hi - span_lo) / val
+        if PT_PER_M / 500 <= ppm <= PT_PER_M / 10:
+            cands.append(ppm)
+    if len(cands) < min_agree:
+        return None
+    cands.sort()
+    best: List[float] = []
+    for c in cands:
+        group = [v for v in cands if abs(v - c) <= tol * c]
+        if len(group) > len(best):
+            best = group
+    if len(best) < min_agree:
+        return None
+    return float(np.median(best)), len(best)
+
+
+# ---------------------------------------------------------------- pairing
+def _inside(s: Segment, rect) -> bool:
+    x0, y0, x1, y1 = rect
+    return all(x0 <= p[0] <= x1 and y0 <= p[1] <= y1 for p in (s.a, s.b))
+
+
+def pair_parallel_segments(segs: Sequence[Segment], d_min: float, d_max: float, angle_tol_deg: float = 2.0,
+                           min_overlap: float = 1.0) -> List[Tuple[Point, Point, float]]:
+    """Return (start, end, thickness) for every pair of parallel segments at wall distance."""
+    n = len(segs)
+    if n == 0:
+        return []
+    A = np.array([s.a for s in segs], dtype=np.float64)
+    B = np.array([s.b for s in segs], dtype=np.float64)
+    D = B - A
+    L = np.linalg.norm(D, axis=1)
+    keep = L > 1e-6
+    U = np.zeros_like(D)
+    U[keep] = D[keep] / L[keep, None]
+    ang = np.degrees(np.arctan2(U[:, 1], U[:, 0])) % 180.0
+    out: List[Tuple[Point, Point, float]] = []
+    cos_tol = math.cos(math.radians(angle_tol_deg))
+    for i in range(n):
+        if not keep[i]:
+            continue
+        # candidate j: parallel and roughly nearby (bbox prefilter)
+        par = np.abs(U[i] @ U.T) >= cos_tol
+        par[: i + 1] = False
+        par &= keep
+        if not par.any():
+            continue
+        ui = U[i]
+        ni = np.array([-ui[1], ui[0]])
+        for j in np.nonzero(par)[0]:
+            # perpendicular distance of j's midpoint to line i
+            mid = (A[j] + B[j]) / 2
+            d = float(np.dot(mid - A[i], ni))
+            if not (d_min <= abs(d) <= d_max):
+                continue
+            # both endpoints of j should sit at about the same offset (true parallel)
+            if abs(float(np.dot(A[j] - A[i], ni)) - d) > 0.3 * abs(d) + 0.5:
+                continue
+            ti = sorted([0.0, float(np.dot(B[i] - A[i], ui))])
+            tj = sorted([float(np.dot(A[j] - A[i], ui)), float(np.dot(B[j] - A[i], ui))])
+            lo, hi = max(ti[0], tj[0]), min(ti[1], tj[1])
+            if hi - lo < max(min_overlap, 0.5 * abs(d)):
+                continue
+            off = ni * (d / 2.0)
+            s = A[i] + ui * lo + off
+            e = A[i] + ui * hi + off
+            out.append(((float(s[0]), float(s[1])), (float(e[0]), float(e[1])), abs(d)))
+    return out
+
+
+def _merge_walls(cands: List[Tuple[Point, Point, float]], angle_tol_deg: float = 2.0, offset_tol: float = 1.0,
+                 gap: float = 2.0) -> List[Tuple[Point, Point, float]]:
+    """Merge collinear, overlapping candidates with similar thickness (keeps the longest span)."""
+    from .geometry import point_segment_distance, segment_length
+
+    cands = sorted(cands, key=lambda c: -segment_length(c[0], c[1]))
+    out: List[Tuple[Point, Point, float]] = []
+    for s in cands:
+        merged = False
+        for k, t in enumerate(out):
+            a1 = math.degrees(math.atan2(s[1][1] - s[0][1], s[1][0] - s[0][0])) % 180
+            a2 = math.degrees(math.atan2(t[1][1] - t[0][1], t[1][0] - t[0][0])) % 180
+            if min(abs(a1 - a2), 180 - abs(a1 - a2)) > angle_tol_deg:
+                continue
+            if abs(s[2] - t[2]) > 0.4 * max(s[2], t[2]):
+                continue
+            if max(point_segment_distance(s[0], t[0], t[1]), point_segment_distance(s[1], t[0], t[1])) > offset_tol:
+                continue
+            dx, dy = t[1][0] - t[0][0], t[1][1] - t[0][1]
+            nrm = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / nrm, dy / nrm
+            proj = [((p[0] - t[0][0]) * ux + (p[1] - t[0][1]) * uy, p) for p in (t[0], t[1], s[0], s[1])]
+            pt_ = sorted(proj[:2], key=lambda z: z[0])
+            ps = sorted(proj[2:], key=lambda z: z[0])
+            if ps[0][0] > pt_[1][0] + gap or ps[1][0] < pt_[0][0] - gap:
+                continue
+            lo = min(proj, key=lambda z: z[0])[1]
+            hi = max(proj, key=lambda z: z[0])[1]
+            out[k] = (lo, hi, (s[2] + t[2]) / 2)
+            merged = True
+            break
+        if not merged:
+            out.append(s)
+    return out
+
+
+def extract_walls(page, region: Optional[PlanRegion] = None, thickness_m: Tuple[float, float] = (0.08, 0.40),
+                  min_length_m: float = 0.20, with_openings: bool = True,
+                  answers: Optional[Dict[str, float]] = None):
+    """Vector wall (and opening) extraction for one page.
+
+    ``answers`` maps a frame code ("P2") to a confirmed width in metres; it
+    overrides both the geometry and the printed schedule.
+
+    Returns ``(walls, openings, region)`` with coordinates in page points.
+    """
+    segs = page_segments(page)
+    region = region or locate_plan_region(page, segs)
+    pen = region.wall_pen_width or wall_pen_width(segs)
+    thick = [s for s in segs if pen is not None and abs(s.width - pen) < 1e-3 and _inside(s, region.rect)]
+    if region.pt_per_m:
+        d_min, d_max = thickness_m[0] * region.pt_per_m, thickness_m[1] * region.pt_per_m
+        min_len = min_length_m * region.pt_per_m
+    else:
+        d_min, d_max, min_len = 2.0, 20.0, 4.0
+        region.notes.append("scale unknown: thickness window 2-20 pt")
+    cands = pair_parallel_segments(thick, d_min, d_max)
+    merged = _merge_walls(cands)
+    walls = [Wall(id=f"w{i + 1}", start=s, end=e, thickness=t) for i, (s, e, t) in
+             enumerate(m for m in merged if math.hypot(m[1][0] - m[0][0], m[1][1] - m[0][1]) >= min_len)]
+    walls = dedupe_walls(walls)
+    region.notes.append(f"pen={pen} thick_segments={len(thick)} pairs={len(cands)} walls={len(walls)}")
+    openings: List[Opening] = []
+    if with_openings:
+        openings = find_openings(page, walls, segs, region, answers=answers)
+    return walls, openings, region
+
+
+# ---------------------------------------------------------------- openings
+_TAG_RE = re.compile(r"^\(?([PJ])\s?\d{1,2}\)?[.,]?$", re.IGNORECASE)
+
+
+def page_curves(page) -> List[Tuple[Point, Point, float]]:
+    """Bezier items as (start, end, stroke width) in display coordinates (door swings are arcs)."""
+    m = _display_xform(page)
+    out = []
+    for d in page.get_drawings():
+        w = float(d.get("width") or 0.0)
+        for it in d["items"]:
+            if it[0] == "c":
+                out.append((_xy(m, it[1].x, it[1].y), _xy(m, it[4].x, it[4].y), w))
+    return out
+
+
+def _wall_gaps(walls: Sequence[Wall], gap_range: Tuple[float, float], offset_tol: float = 2.0,
+               angle_tol_deg: float = 2.0):
+    """Gaps between collinear walls: (start, end, width, wall_id_left, wall_id_right, thickness)."""
+    n = len(walls)
+    if n < 2:
+        return []
+    A = np.array([w.start for w in walls]);
+    B = np.array([w.end for w in walls])
+    D = B - A
+    L = np.linalg.norm(D, axis=1)
+    U = D / np.maximum(L, 1e-9)[:, None]
+    cos_tol = math.cos(math.radians(angle_tol_deg))
+    gaps = []
+    for i in range(n):
+        ui = U[i]
+        ni = np.array([-ui[1], ui[0]])
+        proj_i = sorted([0.0, float(L[i])])
+        # every wall on (nearly) the same line, as intervals along i's axis
+        on_line = []
+        for j in range(n):
+            if j == i or abs(float(ui @ U[j])) < cos_tol:
+                continue
+            off = float(np.dot((A[j] + B[j]) / 2 - A[i], ni))
+            if abs(off) > max(offset_tol, 0.35 * walls[i].thickness):
+                continue
+            t0, t1 = sorted([float(np.dot(A[j] - A[i], ui)), float(np.dot(B[j] - A[i], ui))])
+            on_line.append((t0, t1, j))
+        for t0, t1, j in on_line:
+            if t0 <= proj_i[1]:  # only walls further along the axis, so every pair is seen once
+                continue
+            gap = t0 - proj_i[1]
+            if not (gap_range[0] <= gap <= gap_range[1]):
+                continue
+            # nothing else on the line inside the gap
+            if any(k != j and not (s1 <= proj_i[1] or s0 >= t0) for s0, s1, k in on_line):
+                continue
+            s = A[i] + ui * proj_i[1]
+            e = A[i] + ui * t0
+            gaps.append(((float(s[0]), float(s[1])), (float(e[0]), float(e[1])), gap, walls[i].id, walls[j].id,
+                         (walls[i].thickness + walls[j].thickness) / 2))
+    return gaps
+
+
+def _wall_frame(w: Wall):
+    ax, ay = w.start
+    dx, dy = w.end[0] - ax, w.end[1] - ay
+    L = math.hypot(dx, dy) or 1e-9
+    ux, uy = dx / L, dy / L
+    return (ax, ay), (ux, uy), (-uy, ux), L
+
+
+def _merge_intervals(items, gap: float):
+    """items: list of (t0, t1, payload); merges overlapping/near intervals, concatenating payloads."""
+    items = sorted(items, key=lambda z: z[0])
+    out = []
+    for t0, t1, pay in items:
+        if out and t0 <= out[-1][1] + gap:
+            o0, o1, opay = out[-1]
+            out[-1] = (o0, max(o1, t1), opay + list(pay))
+        else:
+            out.append((t0, t1, list(pay)))
+    return out
+
+
+def dedupe_walls(walls: List[Wall], offset_tol: float = 1.0, angle_tol_deg: float = 2.0) -> List[Wall]:
+    """Drop walls that lie on another, longer wall (same line, overlapping span)."""
+    keep: List[Wall] = []
+    cos_tol = math.cos(math.radians(angle_tol_deg))
+    for w in sorted(walls, key=lambda z: -z.length):
+        dup = False
+        for k in keep:
+            (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(k)
+            if abs(ux * (w.end[0] - w.start[0]) + uy * (w.end[1] - w.start[1])) < cos_tol * w.length:
+                continue
+            offs = [(p[0] - ax) * nx + (p[1] - ay) * ny for p in (w.start, w.end)]
+            if max(abs(o) for o in offs) > max(offset_tol, 0.35 * k.thickness):
+                continue
+            t0, t1 = sorted((p[0] - ax) * ux + (p[1] - ay) * uy for p in (w.start, w.end))
+            overlap = min(t1, L) - max(t0, 0.0)
+            if overlap >= 0.5 * w.length:
+                dup = True
+                break
+        if not dup:
+            keep.append(w)
+    keep.sort(key=lambda z: int(z.id[1:]))
+    for i, w in enumerate(keep):
+        w.id = f"w{i + 1}"
+    return keep
+
+
+def chain_curves(curves: Sequence[Tuple[Point, Point, float]], tol: float = 0.6):
+    """Join bezier pieces end-to-start into arcs. Returns (start, end, n_pieces, path_len) per chain."""
+    n = len(curves)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    ends: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+    for i, (a, b, _w) in enumerate(curves):
+        for p in (a, b):
+            ends[(round(p[0] / tol), round(p[1] / tol))].append(i)
+    for idxs in ends.values():
+        for j in idxs[1:]:
+            ri, rj = find(idxs[0]), find(j)
+            if ri != rj:
+                parent[rj] = ri
+    groups: Dict[int, List[int]] = defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+    out = []
+    for idxs in groups.values():
+        cnt: Counter = Counter()
+        path = 0.0
+        for i in idxs:
+            a, b, _w = curves[i]
+            path += math.hypot(b[0] - a[0], b[1] - a[1])
+            for p in (a, b):
+                cnt[(round(p[0] / tol), round(p[1] / tol))] += 1
+        free = [k for k, c in cnt.items() if c == 1]
+        if len(free) != 2:
+            continue  # closed loop (circle) or branching
+        pts = []
+        for k in free:
+            for i in idxs:
+                for p in curves[i][:2]:
+                    if (round(p[0] / tol), round(p[1] / tol)) == k:
+                        pts.append(p)
+                        break
+                else:
+                    continue
+                break
+        if len(pts) == 2:
+            out.append((pts[0], pts[1], len(idxs), path))
+    return out
+
+
+def find_openings(page, walls: Sequence[Wall], segs: Sequence[Segment], region: PlanRegion,
+                  width_m: Tuple[float, float] = (0.30, 4.00), answers: Optional[Dict[str, float]] = None) -> List[Opening]:
+    """Doors and windows of a vector plan, cue first.
+
+    Per wall, candidates come from independent cues and are merged by overlap:
+      * door leaf: a thin segment perpendicular to the wall, one end on the
+        wall band, 0.55-1.3 m long; the swing arc (bezier pieces chained
+        end-to-end) confirms the side the door opens to;
+      * window frame: two or more mid-pen segments with matching ends running
+        along the wall inside its band;
+      * wall gap: an interruption between collinear walls.
+    A frame tag next to the opening ("P2" door, "J1" window) sets the type;
+    otherwise leaf => door, frame => window, and a bare gap is dropped.
+    """
+    ppm = region.pt_per_m or (PT_PER_M / 75.0)
+    w_min, w_max = width_m[0] * ppm, width_m[1] * ppm
+    x0, y0, x1, y1 = region.rect
+    pen = region.wall_pen_width or 1.0
+    band_tol = 0.5
+    words = _words(page)
+    tags = []  # (point, type, code)
+    for w in words:
+        m = _TAG_RE.match(w[4].strip())
+        if m and x0 - 20 <= w[0] <= x1 + 20 and y0 - 20 <= w[1] <= y1 + 20:
+            code = re.sub(r"[^A-Za-z0-9]", "", w[4]).upper()
+            tags.append((((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), "door" if m.group(1).upper() == "P" else "window",
+                         code))
+    curves = [c for c in page_curves(page) if x0 <= c[0][0] <= x1 and y0 <= c[0][1] <= y1]
+    arcs = [a for a in chain_curves(curves) if 0.5 * w_min <= math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1])]
+    thin_all = [s for s in segs if 1e-3 < s.width < pen - 1e-3 and _inside(s, region.rect) and s.length > 2.0]
+    mid_pen = [s for s in thin_all if s.width >= 0.2 * pen]
+    # pieces that may belong to a swing arc: bezier bits, or short thin lines of a polyline arc
+    arc_pieces = [(c[0], c[1]) for c in curves] + [
+        (s.a, s.b) for s in segs if 1e-3 < s.width < pen - 1e-3 and s.length <= 0.2 * ppm and _inside(s, region.rect)]
+
+    def on_circle(hx, hy, radius):
+        return sum(1 for a, b in arc_pieces
+                   if abs(math.hypot((a[0] + b[0]) / 2 - hx, (a[1] + b[1]) / 2 - hy) - radius) <= 0.15 * radius)
+
+    per_wall: Dict[int, List[Tuple[float, float, List[str]]]] = defaultdict(list)
+    open_leaf_segs: set = set()
+    free_cands = []  # (start, end, cues): openings on a line no wall runs along
+    for wi, w in enumerate(walls):
+        (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+        half = 0.75 * w.thickness + band_tol
+
+        def proj(p):
+            return (p[0] - ax) * ux + (p[1] - ay) * uy, (p[0] - ax) * nx + (p[1] - ay) * ny
+
+        # door across the end of a wall: the leaf lies alongside the wall, hinged at its end, and the
+        # swing arc goes from the leaf's tip to the other jamb, on the line perpendicular to the wall
+        # through its end (a doorway between two parallel walls, with no wall drawn along it)
+        end_tol = max(0.2 * ppm, 1.5 * w.thickness)
+        for si, s in enumerate(thin_all):
+            if not (0.5 * ppm <= s.length <= 1.3 * ppm):
+                continue
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * s.length:
+                continue
+            (ta, oa), (tb, ob) = proj(s.a), proj(s.b)
+            off = (oa + ob) / 2
+            if not (half < abs(off) <= 0.45 * ppm):
+                continue
+            for hinge, tip, th in ((s.a, s.b, ta), (s.b, s.a, tb)):
+                t_end = 0.0 if abs(th) <= end_tol else L if abs(th - L) <= end_tol else None
+                if t_end is None:
+                    continue
+                leaf = s.length
+                for a0, a1, _n, _path in arcs:
+                    for p_tip, p_on in ((a0, a1), (a1, a0)):
+                        if math.hypot(p_tip[0] - tip[0], p_tip[1] - tip[1]) > 0.2 * leaf:
+                            continue
+                        t_on, o_on = proj(p_on)
+                        if abs(t_on - t_end) > 0.2 * leaf or o_on * off < 0 or not (0.75 * leaf <= abs(o_on) <= 1.3 * leaf):
+                            continue
+                        end_pt = (ax + ux * t_end, ay + uy * t_end)
+                        free_cands.append((end_pt, p_on, ["leaf", "swing", "free"]))
+                        open_leaf_segs.add(si)
+                        break
+                    else:
+                        continue
+                    break
+
+        # door leaves drawn open: a thin segment perpendicular to the wall, reaching the wall band, with a
+        # swing arc from its tip back to the wall line. The hinge is where the leaf meets the wall face (the
+        # leaf line may run on past it); the arc's end on the wall marks the other jamb. The hinge may lie
+        # past the wall's end when the opening runs from that end to a perpendicular wall (a door beside a
+        # corner): then the opening must touch the wall's end.
+        end_tol = max(0.2 * ppm, 1.5 * w.thickness)
+        for si, s in enumerate(thin_all):
+            if not (0.5 * ppm <= s.length <= 1.4 * ppm):
+                continue
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) > 0.12 * s.length:
+                continue
+            (ta, oa), (tb, ob) = proj(s.a), proj(s.b)
+            tip, o_tip, o_near = (s.b, ob, oa) if abs(ob) >= abs(oa) else (s.a, oa, ob)
+            sgn = 1.0 if o_tip > 0 else -1.0
+            if abs(o_near) > half and o_near * o_tip > 0:
+                continue  # the leaf does not reach the wall
+            o_h = o_near if (o_near * o_tip > 0 and abs(o_near) <= half) else sgn * min(half, w.thickness / 2)
+            th = (ta + tb) / 2
+            leaf = abs(o_tip - o_h)
+            if not (0.5 * ppm <= leaf <= 1.3 * ppm):
+                continue
+            on_wall = -0.1 * ppm <= th <= L + 0.1 * ppm
+            if not (on_wall or -leaf - end_tol <= th <= L + leaf + end_tol):
+                continue
+            far = None  # t of the other jamb
+            for a0, a1, _n, _path in arcs:
+                for p_tip, p_on in ((a0, a1), (a1, a0)):
+                    if math.hypot(p_tip[0] - tip[0], p_tip[1] - tip[1]) > 0.2 * leaf:
+                        continue
+                    t_on, o_on = proj(p_on)
+                    if abs(o_on) <= half + 0.15 * leaf and 0.75 * leaf <= abs(t_on - th) <= 1.25 * leaf:
+                        far = t_on
+                        break
+                if far is not None:
+                    break
+            if far is None:
+                # polyline or dashed swing: which quarter circle on the tip's side is drawn? Count the
+                # 10-degree slices holding a piece, so clutter at one spot (handle, hatching) cannot win.
+                hx, hy = ax + ux * th + nx * o_h, ay + uy * th + ny * o_h
+                bins = {1.0: set(), -1.0: set()}
+                for a, b in arc_pieces:
+                    mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+                    if abs(math.hypot(mx - hx, my - hy) - leaf) > 0.12 * leaf:
+                        continue
+                    dt, do = (mx - hx) * ux + (my - hy) * uy, ((mx - hx) * nx + (my - hy) * ny) * sgn
+                    if do < 0.05 * leaf or abs(dt) < 0.05 * leaf:
+                        continue  # behind the wall face, or on the leaf itself
+                    bins[1.0 if dt > 0 else -1.0].add(int(math.degrees(math.atan2(do, abs(dt))) // 10))
+                side = max(bins, key=lambda k: len(bins[k]))
+                if len(bins[side]) < 4 or len(bins[side]) <= len(bins[-side]):
+                    continue
+                far = th + side * leaf
+            lo, hi = sorted([th, far])
+            if not on_wall and not (-end_tol <= hi and lo <= L + end_tol and (abs(hi) <= end_tol or abs(lo - L) <= end_tol)):
+                continue  # past the end, but the opening does not start at the wall's end
+            per_wall[wi].append((lo, hi, ["leaf", "swing"]))
+            open_leaf_segs.add(si)
+    for wi, w in enumerate(walls):
+        (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+        half = 0.75 * w.thickness + band_tol
+
+        def proj(p):
+            return (p[0] - ax) * ux + (p[1] - ay) * uy, (p[0] - ax) * nx + (p[1] - ay) * ny
+
+        # door leaves drawn closed: a thin rectangle 0.6-1.3 m long lying parallel to the wall,
+        # just outside its band (the leaf sits in the opening, the wall lines run behind it)
+        leaf_lines = []
+        for si, s in enumerate(thin_all):
+            if si in open_leaf_segs:
+                continue  # an open leaf lying beside a perpendicular wall is not a closed door
+            if not (0.6 * ppm <= s.length <= 1.3 * ppm):
+                continue
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * s.length:
+                continue
+            ta, oa = proj(s.a)
+            tb, ob = proj(s.b)
+            off = (oa + ob) / 2
+            if not (half < abs(off) <= 0.45 * ppm):
+                continue
+            lo, hi = sorted([ta, tb])
+            if hi < -0.1 * ppm or lo > L + 0.1 * ppm:
+                continue
+            leaf_lines.append((lo, hi, off))
+        used = set()
+        for i in range(len(leaf_lines)):
+            if i in used:
+                continue
+            lo, hi, off = leaf_lines[i]
+            for j in range(i + 1, len(leaf_lines)):
+                lo2, hi2, off2 = leaf_lines[j]
+                if j in used or abs(off - off2) > 3.0 or abs(off - off2) < 0.3:
+                    continue
+                if abs(lo - lo2) <= 0.1 * (hi - lo) and abs(hi - hi2) <= 0.1 * (hi - lo):
+                    used.update((i, j))
+                    # confirmation: dashed swing pieces lie on a circle of radius = leaf around a hinge
+                    leaf = hi - lo
+                    n_arc = max(on_circle(ax + ux * t_h, ay + uy * t_h, leaf) for t_h in (lo, hi))
+                    per_wall[wi].append((lo, hi, ["leaf"] + (["swing"] if n_arc >= 3 else [])))
+                    break
+        # window frames
+        frames = []
+        for s in mid_pen:
+            dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * s.length:
+                continue
+            ta, oa = proj(s.a)
+            tb, ob = proj(s.b)
+            if max(abs(oa), abs(ob)) > half:
+                continue
+            lo, hi = sorted([ta, tb])
+            if hi < -0.2 * ppm or lo > L + 0.2 * ppm:
+                continue
+            frames.append((lo, hi, [(lo, hi)]))
+        for lo, hi, spans in _merge_intervals(frames, gap=0.15 * ppm):
+            width = hi - lo
+            if not (w_min <= width <= w_max):
+                continue
+            # the frame must sit on this wall, not on its extension past the end
+            if min(hi, L) - max(lo, 0.0) < 0.7 * width:
+                continue
+            consistent = sum(1 for a, b in spans if abs(a - lo) <= 0.12 * width and abs(b - hi) <= 0.12 * width)
+            if consistent >= 2:
+                per_wall[wi].append((max(lo, 0.0), min(hi, L), ["frame"] * consistent))
+
+    # window on a line with no wall along it (the whole stretch between two walls is openings): three or
+    # more parallel mid-pen lines within a wall's thickness of each other, with matching ends, both ends
+    # touching a wall
+    thick_med = sorted(w.thickness for w in walls)[len(walls) // 2] if walls else 3 * pen
+    end_tol_g = max(0.2 * ppm, 1.5 * thick_med)
+
+    def touches_wall(p):
+        for w in walls:
+            (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+            t = (p[0] - ax) * ux + (p[1] - ay) * uy
+            o = (p[0] - ax) * nx + (p[1] - ay) * ny
+            if -end_tol_g <= t <= L + end_tol_g and abs(o) <= 0.75 * w.thickness + end_tol_g:
+                return True
+        return False
+
+    used_frame = set()
+    for i, s in enumerate(mid_pen):
+        if i in used_frame or not (w_min <= s.length <= w_max):
+            continue
+        dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+        ux, uy = dx / s.length, dy / s.length
+        nx, ny = -uy, ux
+        group = [i]
+        for j, t in enumerate(mid_pen):
+            if j == i or j in used_frame or abs((t.b[0] - t.a[0]) * ux + (t.b[1] - t.a[1]) * uy) < 0.985 * t.length:
+                continue
+            o = ((t.a[0] + t.b[0]) / 2 - s.a[0]) * nx + ((t.a[1] + t.b[1]) / 2 - s.a[1]) * ny
+            if abs(o) > 1.2 * thick_med:
+                continue
+            pa = (t.a[0] - s.a[0]) * ux + (t.a[1] - s.a[1]) * uy
+            pb = (t.b[0] - s.a[0]) * ux + (t.b[1] - s.a[1]) * uy
+            lo, hi = min(pa, pb), max(pa, pb)
+            if abs(lo) <= 0.12 * s.length and abs(hi - s.length) <= 0.12 * s.length:
+                group.append(j)
+        if len(group) < 3:
+            continue
+        used_frame.update(group)
+        offs = [((mid_pen[j].a[0] + mid_pen[j].b[0]) / 2 - s.a[0]) * nx + ((mid_pen[j].a[1] + mid_pen[j].b[1]) / 2 - s.a[1]) * ny for j in group]
+        o_mid = sum(offs) / len(offs)
+        start = (s.a[0] + nx * o_mid, s.a[1] + ny * o_mid)
+        end = (s.b[0] + nx * o_mid, s.b[1] + ny * o_mid)
+        if touches_wall(start) and touches_wall(end):
+            free_cands.append((start, end, ["frame"] * len(group) + ["free"]))
+
+    wall_index = {w.id: i for i, w in enumerate(walls)}
+    seen_gaps = set()
+    for gs, ge, width, wid_l, wid_r, thick in _wall_gaps(walls, (w_min, w_max)):
+        key = (round((gs[0] + ge[0]) / 2), round((gs[1] + ge[1]) / 2))
+        if key in seen_gaps:
+            continue
+        seen_gaps.add(key)
+        wi = wall_index[wid_l]
+        (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(walls[wi])
+        t0 = (gs[0] - ax) * ux + (gs[1] - ay) * uy
+        t1 = (ge[0] - ax) * ux + (ge[1] - ay) * uy
+        g0, g1 = min(t0, t1), max(t0, t1)
+        per_wall[wi].append((g0, g1, ["gap"]))
+        # window drawn in the gap: mid-pen lines along the wall line, inside its band, with matching ends
+        # (the wall pairing stops at the window, so the frame lines lie past the wall's end, in the gap)
+        half = 0.75 * walls[wi].thickness + band_tol
+        frames = []
+        for sg in mid_pen:
+            dx, dy = sg.b[0] - sg.a[0], sg.b[1] - sg.a[1]
+            if abs(dx * ux + dy * uy) < 0.985 * sg.length:
+                continue
+            oa = (sg.a[0] - ax) * nx + (sg.a[1] - ay) * ny
+            ob = (sg.b[0] - ax) * nx + (sg.b[1] - ay) * ny
+            if max(abs(oa), abs(ob)) > half:
+                continue
+            lo, hi = sorted(((sg.a[0] - ax) * ux + (sg.a[1] - ay) * uy, (sg.b[0] - ax) * ux + (sg.b[1] - ay) * uy))
+            if lo < g0 - 0.1 * ppm or hi > g1 + 0.1 * ppm:
+                continue
+            frames.append((lo, hi, [(lo, hi)]))
+        for lo, hi, spans in _merge_intervals(frames, gap=0.15 * ppm):
+            fw = hi - lo
+            if not (w_min <= fw <= w_max):
+                continue
+            consistent = sum(1 for fa, fb in spans if abs(fa - lo) <= 0.12 * fw and abs(fb - hi) <= 0.12 * fw)
+            if consistent >= 2:
+                per_wall[wi].append((lo, hi, ["frame"] * consistent))
+
+    cands = []
+    for wi, items in per_wall.items():
+        primary = [(lo, hi, cues) for lo, hi, cues in items if "leaf" in cues or "frame" in cues]
+        gaps_w = [(lo, hi) for lo, hi, cues in items if cues == ["gap"]]
+        taken = [False] * len(gaps_w)
+        # overlapping primaries (e.g. a leaf and its frame lines) become one opening
+        merged = []  # (lo, hi, cues, parts)
+        for lo, hi, cues in sorted(primary, key=lambda z: z[0]):
+            part = (lo, hi, cues[0])
+            # a clear window frame (3+ lines) next to a leaf stays a separate opening (window beside a door)
+            clear_frame = cues.count("frame") >= 3 or merged and merged[-1][2].count("frame") >= 3
+            other_leaf = "leaf" in cues or merged and "leaf" in merged[-1][2]
+            if merged and lo < merged[-1][1] - 0.05 * ppm and not ("leaf" in cues and "leaf" in merged[-1][2]) and not (clear_frame and other_leaf and not ("leaf" in cues and "leaf" in merged[-1][2])):
+                m0, m1, mc, parts = merged[-1]
+                # a leaf defines the door width: frames/gaps attach to it without widening it
+                if "leaf" in mc and "leaf" not in cues:
+                    merged[-1] = (m0, m1, mc + cues, parts + [part])
+                elif "leaf" in cues and "leaf" not in mc:
+                    merged[-1] = (lo, hi, mc + cues, parts + [part])
+                else:
+                    merged[-1] = (m0, max(m1, hi), mc + cues, parts + [part])
+            else:
+                # two overlapping leaves (jamb lines, furniture) stay separate and compete for the tag
+                merged.append((lo, hi, list(cues), [part]))
+        for lo, hi, cues, parts in merged:
+            for gi, (g0, g1) in enumerate(gaps_w):
+                ov = min(hi, g1) - max(lo, g0)
+                if ov >= 0.5 * min(hi - lo, g1 - g0):
+                    cues = cues + ["gap"]
+                    parts = parts + [(g0, g1, "gap")]
+                    taken[gi] = True
+            if w_min <= hi - lo <= w_max:
+                cands.append((wi, lo, hi, cues, parts))
+        for gi, (g0, g1) in enumerate(gaps_w):
+            if not taken[gi]:
+                cands.append((wi, g0, g1, ["gap"], [(g0, g1, "gap")]))
+    cands = [{"wall": wi, "start": (walls[wi].start[0] + _wall_frame(walls[wi])[1][0] * lo,
+                                    walls[wi].start[1] + _wall_frame(walls[wi])[1][1] * lo),
+              "end": (walls[wi].start[0] + _wall_frame(walls[wi])[1][0] * hi,
+                      walls[wi].start[1] + _wall_frame(walls[wi])[1][1] * hi),
+              "width": hi - lo, "cues": Counter(cues), "tag": None, "parts": parts}
+             for wi, lo, hi, cues, parts in cands]
+    for start, end, cues in free_cands:
+        cx, cy = (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
+        if any(math.hypot((c["start"][0] + c["end"][0]) / 2 - cx, (c["start"][1] + c["end"][1]) / 2 - cy) <= 0.3 * ppm
+               and not (c["cues"]["leaf"] and "frame" in cues) for c in cands):
+            continue  # a wall already carries this opening
+        cands.append({"wall": None, "start": start, "end": end, "width": math.hypot(end[0] - start[0], end[1] - start[1]),
+                      "cues": Counter(cues), "tag": None, "parts": []})
+
+    # Tag -> candidate assignment. Cost = distance plus penalties when the candidate's cues do not
+    # fit the tag type (a "P" tag wants a door leaf, a "J" tag wants frame lines or a wall gap).
+    pairs = []
+    for k, (tp, ttype, _code) in enumerate(tags):
+        for ci, c in enumerate(cands):
+            cx, cy = (c["start"][0] + c["end"][0]) / 2, (c["start"][1] + c["end"][1]) / 2
+            d = math.hypot(tp[0] - cx, tp[1] - cy)
+            if d > max(1.2 * ppm, 1.0 * c["width"]):
+                continue
+            cues = c["cues"]
+            cost = d + (0.3 * ppm if cues["free"] else 0)  # an opening on a wall beats one on a bare line
+            if ttype == "door":
+                cost += 0 if cues["leaf"] else 0.6 * ppm
+                cost += 0 if cues["swing"] else 0.3 * ppm  # a leaf with its swing arc beats a bare rectangle
+                cost += 0.3 * ppm if not (0.55 * ppm <= c["width"] <= 1.05 * ppm) else 0  # usual leaf widths
+            else:
+                cost += 0 if (cues["frame"] or cues["gap"]) else 0.6 * ppm
+                cost += 0 if cues["frame"] else 0.3 * ppm  # frame lines beat a bare gap (gaps include sills/jambs)
+                cost += 0.4 * ppm if cues["leaf"] else 0
+                if c["width"] > 2.5 * ppm:
+                    continue  # a 2.5 m+ interruption is a passage or a garage front, not a window
+                cost += 0.5 * ppm if c["width"] > 2.0 * ppm else 0
+            pairs.append((cost, k, ci, ttype))
+    used_t, used_c = set(), set()
+    taken_centres: List[Point] = []
+    for cost, k, ci, ttype in sorted(pairs):
+        if k in used_t or ci in used_c:
+            continue
+        c = cands[ci]
+        cx, cy = (c["start"][0] + c["end"][0]) / 2, (c["start"][1] + c["end"][1]) / 2
+        # overlapping candidates (leaf + jamb lines, two walls at a corner) are one opening: one tag each
+        if any(math.hypot(cx - tx, cy - ty) <= 0.3 * ppm for tx, ty in taken_centres):
+            used_c.add(ci)
+            continue
+        used_t.add(k)
+        used_c.add(ci)
+        taken_centres.append((cx, cy))
+        c["tag"] = ttype
+        c["code"] = tags[k][2]
+    tagged_drawing = len(tags) >= 3
+
+    region.candidates = cands  # type: ignore[attr-defined]  (inspection / annotation aid)
+    # Tags with no candidate: the opening is on the nearest wall. A short wall piece next to the tag is
+    # a window/door drawn with the wall pen (its lines were paired as a "wall"); otherwise use a default width.
+    for k, (tp, ttype, code) in enumerate(tags):
+        if k in used_t:
+            continue
+        best = None
+        for wi, w in enumerate(walls):
+            (ax, ay), (ux, uy), (nx, ny), L = _wall_frame(w)
+            t = (tp[0] - ax) * ux + (tp[1] - ay) * uy
+            o = abs((tp[0] - ax) * nx + (tp[1] - ay) * ny)
+            if -0.3 * ppm <= t <= L + 0.3 * ppm and o <= 1.2 * ppm and (best is None or o < best[0]):
+                best = (o, wi, t)
+        if best is None:
+            continue
+        o, wi, t = best
+        (ax, ay), (ux, uy), _n, L = _wall_frame(walls[wi])
+        if 0.4 * ppm <= L <= 1.2 * ppm:
+            lo, hi = 0.0, L  # the short "wall" piece is the frame itself
+        else:
+            half_w = (0.8 if ttype == "door" else 0.6) * ppm / 2
+            t = min(max(t, 0.0), L)
+            lo, hi = t - half_w, t + half_w  # default width centred on the tag, may overhang a stub
+        cands.append({"wall": wi, "start": (ax + ux * lo, ay + uy * lo), "end": (ax + ux * hi, ay + uy * hi),
+                      "width": hi - lo, "cues": Counter(["tag_only"]), "tag": ttype, "code": code, "parts": []})
+        used_t.add(k)
+
+    typed = []
+    for c in cands:
+        cues = c["cues"]
+        if c["tag"]:
+            otype = c["tag"]
+        elif tagged_drawing:
+            continue  # every opening carries a frame tag in this drawing; untagged cues are clutter
+        elif cues["leaf"] and (cues["swing"] or cues["gap"]):
+            otype = "door"
+        elif cues["frame"] >= 3 or (cues["frame"] and cues["gap"]):
+            otype = "window"
+        else:
+            continue
+        # a leaf with its swing arc is direct evidence of a door; two lines in a gap may be a door drawn
+        # closed as well as a window, so the arc wins when both describe the same opening
+        score = (1 if c["tag"] else 0, 1 if (cues["leaf"] and cues["swing"]) else 0, sum(cues.values()))
+        typed.append((score, otype, c))
+    # the same physical opening can be seen from two overlapping walls: keep the best-supported one
+    typed.sort(key=lambda z: z[0], reverse=True)
+    openings: List[Opening] = []
+    for score, otype, c in typed:
+        cx, cy = (c["start"][0] + c["end"][0]) / 2, (c["start"][1] + c["end"][1]) / 2
+        if any(math.hypot((o.start[0] + o.end[0]) / 2 - cx, (o.start[1] + o.end[1]) / 2 - cy) <= 0.3 * ppm
+               for o in openings):
+            continue
+        openings.append(Opening(id=f"o{len(openings) + 1}", type=otype, start=c["start"], end=c["end"],
+                                width=c["width"], wall_id=walls[c["wall"]].id if c["wall"] is not None else None,
+                                confidence=0.5 if c["cues"]["tag_only"] else 1.0, code=c.get("code"),
+                                width_source="default" if c["cues"]["tag_only"] and c["width"] < 0 else "geometry"))
+    apply_schedule(page, openings, region, tags, ppm, answers=answers)
+    n_d = sum(o.type == "door" for o in openings)
+    region.notes.append(f"opening cues: candidates={len(cands)} tags={len(tags)} matched_tags={len(used_t)} "
+                        f"tags_required={tagged_drawing} "
+                        f"arcs={len(arcs)} -> doors={n_d} windows={len(openings) - n_d}")
+    return openings
+
+
+def apply_schedule(page, openings: List[Opening], region: PlanRegion, tags, ppm: float,
+                   answers: Optional[Dict[str, float]] = None) -> None:
+    """Override opening widths with the printed schedule (or the user's answers) and list open questions."""
+    from .schedule import read_schedule
+
+    questions: List[str] = []
+    doc = page.parent
+    sched = read_schedule(doc, exclude={page.number: region.rect}) if doc is not None else None
+    if sched is not None:
+        region.notes.extend(sched.notes)
+    answers = {k.upper(): float(v) for k, v in (answers or {}).items()}
+    codes_found: Counter = Counter(o.code for o in openings if o.code)
+    for o in openings:
+        if not o.code:
+            continue
+        row = sched.get(o.code) if sched else None
+        new_w = None
+        if o.code in answers:
+            new_w, o.width_source = answers[o.code] * ppm, "answer"
+        elif row is not None:
+            new_w, o.width_source = row.width_m * ppm, "schedule"
+            o.height_m, o.sill_m, o.kind = row.height_m, row.sill_m, row.kind
+        if new_w is not None and o.width > 0:
+            cx, cy = (o.start[0] + o.end[0]) / 2, (o.start[1] + o.end[1]) / 2
+            ux, uy = (o.end[0] - o.start[0]) / o.width, (o.end[1] - o.start[1]) / o.width
+            o.start = (cx - ux * new_w / 2, cy - uy * new_w / 2)
+            o.end = (cx + ux * new_w / 2, cy + uy * new_w / 2)
+            o.width = new_w  # confidence still describes the position (tag-only stays 0.5)
+    # questions for a human
+    if sched is not None and not sched.rows:
+        geo = ", ".join(
+            f"{c}=" + "/".join(f"{v:.2f}" for v in sorted({round(o.width / ppm, 2) for o in openings if o.code == c})) + " m"
+            for c in sorted(codes_found))
+        questions.append("Quadro de esquadrias não legível como texto (tabela em contorno ou ausente). "
+                         f"Larguras vieram da geometria: {geo}. Confirme ou corrija por código.")
+    if sched is not None:
+        for code, row in sorted(sched.rows.items()):
+            n = codes_found.get(code, 0)
+            if row.quantity is not None and n != row.quantity:
+                questions.append(f"Quadro diz {row.quantity} x {code} ({row.width_m:.2f} m); encontrei {n} na planta.")
+    for o in openings:
+        if o.confidence < 1.0:
+            questions.append(f"{o.code or o.type}: posição inferida só pela etiqueta (largura {o.width / ppm:.2f} m, "
+                             f"parede {o.wall_id}). Confirme posição e largura.")
+        elif o.width_source == "geometry" and o.code and (sched is None or not sched.rows):
+            pass  # already covered by the schedule question
+    region.questions = questions  # type: ignore[attr-defined]
