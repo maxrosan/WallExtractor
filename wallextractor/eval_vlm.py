@@ -3,6 +3,9 @@
 Walls match when both ends are within the tolerance (either direction); doors and windows when the type
 agrees, the midpoints are within the tolerance, the directions within 20 degrees and the lengths within the
 tolerance. Tolerances are fractions of the image's long side (F1@0.015 and F1@0.05, as in fpvec-lab).
+Matching whole walls is harsh when walls are split at every opening (one end in the wrong place fails the
+piece), so ``wall_len`` also reports the share of predicted / gold wall length that lies within the
+tolerance of the other side.
 Also reports how often the answer is valid JSON. Predictions go to ``--out`` for inspection.
 
 Usage:
@@ -46,6 +49,38 @@ def match_walls(pred: List[Dict], gold: List[Dict], tol: float) -> int:
             if d <= tol:
                 pairs.append((d, i, j))
     return _match(pairs)
+
+
+def _sample(walls: List[Dict], step: float = 2.0):
+    import numpy as np
+
+    out = []
+    for w in walls:
+        a, b = w["start"], w["end"]
+        n = max(2, int(math.dist(a, b) / step))
+        for k in range(n + 1):
+            out.append((a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n))
+    return np.array(out).reshape(-1, 2)
+
+
+def _within(points, walls: List[Dict], tol: float) -> int:
+    import numpy as np
+
+    if not len(points) or not walls:
+        return 0
+    best = np.full(len(points), np.inf)
+    for w in walls:
+        a, b = np.array(w["start"], float), np.array(w["end"], float)
+        ab = b - a
+        t = np.clip(((points - a) @ ab) / max(float(ab @ ab), 1e-9), 0, 1)
+        best = np.minimum(best, np.linalg.norm(points - (a + t[:, None] * ab), axis=1))
+    return int((best <= tol).sum())
+
+
+def length_counts(pred: List[Dict], gold: List[Dict], tol: float) -> Tuple[int, int, int, int]:
+    """(pred samples near gold, pred samples, gold samples near pred, gold samples), 2 px apart."""
+    P, G = _sample(pred), _sample(gold)
+    return _within(P, gold, tol), len(P), _within(G, pred, tol), len(G)
 
 
 def _dir(o):
@@ -117,6 +152,7 @@ def main(argv=None) -> int:
     model, processor = load(a.model, a.adapter)
     tols = [float(t) for t in a.tols.split(",")]
     tot = {t: {k: [0, 0, 0] for k in ("wall", "door", "window")} for t in tols}
+    lens = {t: [0, 0, 0, 0] for t in tols}
     per_source: Dict[str, Dict] = {}
     preds = []
     valid = 0
@@ -134,6 +170,7 @@ def main(argv=None) -> int:
             src = per_source.setdefault(r["source"], {t2: {k: [0, 0, 0] for k in ("wall", "door", "window")}
                                                        for t2 in tols})
             tp = match_walls(pred["walls"], gold["walls"], tol)
+            lens[t] = [x + y for x, y in zip(lens[t], length_counts(pred["walls"], gold["walls"], tol))]
             for acc in (tot[t], src[t]):
                 acc["wall"][0] += tp
                 acc["wall"][1] += len(pred["walls"])
@@ -154,10 +191,17 @@ def main(argv=None) -> int:
         return {str(t): {k: dict(zip(("P", "R", "F1"), (round(v, 3) for v in f1(*acc[t][k])))) for k in acc[t]}
                 for t in acc}
 
-    report = {"plans": len(rows), "valid_json": valid / max(1, len(rows)), "all": table(tot),
+    def len_table():
+        out = {}
+        for t, (cp, n_p, cg, n_g) in lens.items():
+            p, r = cp / max(1, n_p), cg / max(1, n_g)
+            out[str(t)] = {"P": round(p, 3), "R": round(r, 3), "F1": round(2 * p * r / (p + r), 3) if p + r else 0.0}
+        return out
+
+    report = {"plans": len(rows), "valid_json": valid / max(1, len(rows)), "all": table(tot), "wall_len": len_table(),
               "by_source": {s: table(v) for s, v in per_source.items()}, "adapter": a.adapter, "model": a.model,
               "elapsed_s": round(time.time() - t0)}
-    print(json.dumps({k: report[k] for k in ("plans", "valid_json", "all", "by_source")}, indent=1))
+    print(json.dumps({k: report[k] for k in ("plans", "valid_json", "all", "wall_len", "by_source")}, indent=1))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump({"report": report, "predictions": preds}, f, ensure_ascii=False, indent=1)

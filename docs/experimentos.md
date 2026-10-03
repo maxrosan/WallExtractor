@@ -500,3 +500,33 @@ para 0,3. É o limite conhecido da coordenada escrita token a token
 (`docs/escolha-do-modelo.md`). A perda de validação quase não caiu na
 segunda época enquanto a de treino caiu: as 26 brasileiras já foram vistas
 40 vezes cada.
+
+### Q1: ajuste pela máscara (descartado) e métrica por comprimento (2026-10-03)
+
+Hipótese: o Qwen acerta a estrutura e erra a posição; mover cada parede, só
+numa faixa estreita, para a parede da máscara do E5 recuperaria a precisão a
+1,5%. Medido nas 7 brasileiras de validação:
+
+| F1 de parede (pontas) | @1,5% | @5% |
+|---|---|---|
+| Q1 | 0,32 | 0,68 |
+| + deslocamento perpendicular | 0,32 | 0,68 |
+| + pontas na interseção com a parede perpendicular | 0,30 | 0,71 |
+| + pontas no fim da parede na máscara | 0,24 | 0,74 |
+| + as duas (faixa de 1,5% a 3,5%) | 0,31 a 0,33 | 0,70 a 0,74 |
+
+Nada recupera a precisão. O erro perpendicular do Qwen já é pequeno
+(mediana 0,1% do lado maior); o que falha a 1,5% são as pontas, e no
+gabarito as paredes são trechos interrompidos em cada porta e janela, não de
+canto a canto. Estender até a interseção cria trechos que não existem, e a
+máscara do E5 é fraca nas paredes de contorno duplo oco de SJC.
+
+A métrica de pontas exagera o erro: um trecho com uma ponta fora conta como
+erro inteiro. Medida pelo comprimento (fração da linha de parede prevista a
+menos da tolerância de uma parede do gabarito, e vice-versa), o Q1 fica em:
+
+| tolerância | 0,5% | 1,0% | 1,5% | 5% |
+|---|---|---|---|---|
+| F1 por comprimento | 0,64 | 0,71 | 0,77 | 0,95 |
+
+`eval_vlm` passa a reportar `wall_len` junto com o F1 de pontas.
