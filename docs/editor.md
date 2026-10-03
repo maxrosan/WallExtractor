@@ -88,8 +88,9 @@ Abra http://localhost:8000, informe o token, envie PDFs.
    entrega, build por **Dockerfile** (na raiz).
 2. Volume: monte um volume persistente em `/data` (PDFs, renders e o banco
    SQLite ficam lá).
-3. Variáveis de ambiente: `EDITOR_TOKEN` (obrigatória, é a senha da página) e,
-   opcionalmente, `EDITOR_MODEL=/data/best.onnx` para plantas raster.
+3. Variáveis de ambiente: `EDITOR_TOKEN` (obrigatória, é a senha da página).
+   O modelo para plantas raster fica em `/data/model.onnx` (ou no caminho de
+   `EDITOR_MODEL`) e é enviado com `PUT /api/model`, sem redeploy.
 4. Porta 8000, domínio com HTTPS pelo próprio EasyPanel.
 5. Memória: o contêiner usa entre 300 e 600 MB em uso normal. Fica dentro dos
    6 a 8 GB do servidor com folga.
@@ -194,6 +195,8 @@ esse passo entrar: a imagem é o input e o JSON é o alvo.
 | `GET /api/plans/{id}/pdf` | PDF original (para rodar o extrator offline contra as correções) |
 | `GET /api/plans/{id}/tile?x&y&w&h&s` | recorte re-renderizado do PDF para zoom |
 | `GET /api/export?status=corrected` | zip de pares de treino |
+| `GET /api/model` | modelo raster em uso: presença, tamanho, sha256 |
+| `PUT /api/model` (multipart `file`) | troca o modelo raster (ONNX); validado antes de substituir o atual |
 
 Todas as rotas `/api` exigem o header `X-Token` (ou `?token=`) quando
 `EDITOR_TOKEN` está definido.

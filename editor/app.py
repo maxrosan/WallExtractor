@@ -4,7 +4,8 @@ Run locally:   uvicorn editor.app:app --host 0.0.0.0 --port 8000
 Environment:   EDITOR_DATA   storage root (default /data)
                EDITOR_TOKEN  shared secret; when set, every /api call needs
                              header X-Token or ?token=   (the page asks for it once)
-               EDITOR_MODEL  optional ONNX segmenter for raster PDFs
+               EDITOR_MODEL  ONNX segmenter for raster PDFs (default <EDITOR_DATA>/model.onnx,
+                             uploaded with PUT /api/model)
 
 The editor works in pixels of the base render (long side 2000 px) of the
 plan region; ``scale.px_per_m`` converts to metres. Corrected plans are the
@@ -32,7 +33,18 @@ from .store import STATUSES, Store
 
 DATA_ROOT = os.environ.get("EDITOR_DATA", "/data")
 TOKEN = os.environ.get("EDITOR_TOKEN", "")
-MODEL = os.environ.get("EDITOR_MODEL", "")
+MODEL = os.environ.get("EDITOR_MODEL", "") or os.path.join(DATA_ROOT, "model.onnx")
+_segmenter: Dict[str, Any] = {"mtime": None, "obj": None}
+
+
+def _get_segmenter():
+    """The raster model, loaded once and reloaded when the file changes (a new upload)."""
+    from wallextractor.infer import load_segmenter
+
+    mtime = os.path.getmtime(MODEL)
+    if _segmenter["mtime"] != mtime:
+        _segmenter["obj"], _segmenter["mtime"] = load_segmenter(MODEL), mtime
+    return _segmenter["obj"]
 BASE_SIDE = 2000
 EXPORT_SIDE = 1024
 
@@ -51,7 +63,7 @@ def _extract(pdf_path: str, page: int) -> tuple[dict, np.ndarray, dict]:
     """Run the extractor. Returns (plan dict, rgb of the base render, meta)."""
     import pymupdf
 
-    from wallextractor.infer import extract_vector, load_segmenter, segment_image
+    from wallextractor.infer import extract_vector, segment_image
     from wallextractor.pdf import render_page
     from wallextractor.vector_walls import _inside, page_segments, wall_pen_width
     from wallextractor.vectorize import mask_to_plan
@@ -80,12 +92,12 @@ def _extract(pdf_path: str, page: int) -> tuple[dict, np.ndarray, dict]:
     # raster fallback
     rgb, px_per_pt = render_page(pdf_path, page=page, max_side=BASE_SIDE)
     if MODEL and os.path.isfile(MODEL):
-        mask = segment_image(load_segmenter(MODEL), rgb, size=768)
+        mask = segment_image(_get_segmenter(), rgb, size=768)
         plan = mask_to_plan(mask, source_file=os.path.basename(pdf_path), page=page, kind="raster")
     else:
         plan = mask_to_plan(np.zeros(rgb.shape[:2], np.uint8), source_file=os.path.basename(pdf_path), page=page,
                             kind="raster")
-        meta["notes"] = ["PDF sem vetores e sem modelo raster configurado (EDITOR_MODEL): anote do zero"]
+        meta["notes"] = ["PDF sem vetores e sem modelo raster configurado (PUT /api/model): anote do zero"]
     plan.image.dpi = round(72.0 * px_per_pt, 2)
     plan.source.px_per_pt = round(px_per_pt, 4)
     return plan.to_dict(), rgb, meta
@@ -94,7 +106,44 @@ def _extract(pdf_path: str, page: int) -> tuple[dict, np.ndarray, dict]:
 # ---------------------------------------------------------------- API
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "plans": len(store.list())}
+    return {"ok": True, "plans": len(store.list()), "model": os.path.isfile(MODEL)}
+
+
+def _model_info() -> dict:
+    import hashlib
+
+    if not os.path.isfile(MODEL):
+        return {"present": False, "path": MODEL}
+    h = hashlib.sha256()
+    with open(MODEL, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return {"present": True, "path": MODEL, "bytes": os.path.getsize(MODEL), "sha256": h.hexdigest(),
+            "modified": os.path.getmtime(MODEL)}
+
+
+@app.get("/api/model", dependencies=[Depends(auth)])
+def get_model() -> dict:
+    return _model_info()
+
+
+@app.put("/api/model", dependencies=[Depends(auth)])
+async def put_model(file: UploadFile = File(...)) -> dict:
+    """Replace the raster segmenter (ONNX). Loaded and checked before it replaces the current one."""
+    import onnxruntime as ort
+
+    os.makedirs(os.path.dirname(MODEL) or ".", exist_ok=True)
+    tmp = MODEL + ".upload"
+    with open(tmp, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    try:
+        sess = ort.InferenceSession(tmp, providers=["CPUExecutionProvider"])
+        shape = sess.get_inputs()[0].shape
+    except Exception as exc:  # noqa: BLE001
+        os.remove(tmp)
+        raise HTTPException(status_code=400, detail=f"ONNX inválido: {exc}") from exc
+    os.replace(tmp, MODEL)
+    return {**_model_info(), "input_shape": [str(d) for d in shape]}
 
 
 @app.get("/api/plans", dependencies=[Depends(auth)])
