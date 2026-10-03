@@ -488,6 +488,18 @@ próprio `LEIA-ME.md` (regras de anotação e formato), `planta.png`, `planta_nu
 5. Se a sessão for interrompida ou o limite de tempo acabar, entregue o que já tiver em
    `correcoes.json`. Quando eu disser "continue", retome pela primeira planta que ainda não tem
    arquivo em `correcoes/` (confira em `progresso.txt`).
+6. Só depois de corrigir TODAS as plantas (as correções vêm antes; se o tempo estiver acabando,
+   entregue as correções e deixe este passo), entregue mais dois arquivos que cobrem o lote inteiro:
+   - `ferramentas.py`: os scripts que você usou nas correções, num único arquivo executável
+     (Python + Pillow/numpy), uma função por ferramenta, com um comentário curto dizendo que problema
+     ela resolve. Sem coordenadas nem valores fixos de uma planta: parâmetros relativos (pixels da
+     imagem ou espessura da parede), para servir em outras plantas.
+   - `relatorio_lote.md`: os problemas que você encontrou nos `planta.json` originais (paredes
+     picotadas, parede onde não existe, porta que era janela...), em quantas plantas e quantas vezes
+     cada um; para cada problema, se uma das ferramentas corrige sozinha e com quais parâmetros, ou
+     se precisou de avaliação visual; as decisões que você tomou olhando a imagem e que um script não
+     tomaria; o que se repetiu entre as plantas e o que foi exceção de uma só; e o que você mudaria
+     no rascunho automático para dar menos trabalho.
 
 No editor, "Importar lote" aceita o `correcoes.json` ou os vários `<plan_id>.json` de uma vez; cada
 correção entra como rascunho na sua planta, para revisão.
@@ -498,6 +510,8 @@ LEIA-ME_LOTE.md da raiz: corrija cada planta seguindo o LEIA-ME.md da pasta dela
 me pedir confirmação entre elas, gravando correcoes/<plan_id>.json e anotando correcoes/progresso.txt. No fim,
 me entregue correcoes.json com todas as correções (uma chave por plan_id). Se o tempo acabar antes, entregue o
 que já tiver; quando eu disser "continue", retome pela primeira planta sem arquivo em correcoes/.
+Só depois de terminar todas as plantas, entregue também ferramentas.py e relatorio_lote.md cobrindo o lote
+inteiro, como pede o passo 6 do LEIA-ME_LOTE.md (as correções vêm antes: se faltar tempo, deixe estes dois).
 """
 
 AI_BATCH_MAX = 40

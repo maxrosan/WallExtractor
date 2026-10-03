@@ -57,7 +57,11 @@ página estática) e `Dockerfile` na raiz.
   `PROMPT_LOTE.txt` e `LEIA-ME_LOTE.md`: a IA corrige uma planta depois da
   outra sem pedir confirmação, grava `correcoes/<plan_id>.json` e
   `correcoes/progresso.txt`, entrega `correcoes.json` (`{"<plan_id>": correção}`)
-  e, se for interrompida, retoma com "continue". "Importar lote" aceita o
+  e, se for interrompida, retoma com "continue". Depois de todas as plantas
+  (as correções vêm antes), entrega também `ferramentas.py` (os scripts
+  usados, generalizados) e `relatorio_lote.md` (problemas do rascunho por
+  frequência no lote, o que um script resolve e o que exigiu olhar a
+  imagem, o que mudar no rascunho). "Importar lote" aceita o
   `correcoes.json`, uma lista de correções com `plan_id` ou vários `.json`
   (o `plan_id` vem de dentro ou do nome do arquivo); cada correção entra como
   rascunho na sua planta, que continua pendente, e um resumo lista planta a

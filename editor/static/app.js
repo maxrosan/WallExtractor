@@ -721,7 +721,8 @@ $("#batch-get").addEventListener("click", async () => {
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) }, "ia_lote.zip",
     `Próximos passos: envie o zip ao ChatGPT ou ao Claude com o texto do <span class="mono">PROMPT_LOTE.txt</span> (na raiz do zip).
      A IA corrige uma planta depois da outra e devolve <span class="mono">correcoes.json</span>; se parar no meio, diga "continue".
-     Depois use <b>Importar lote</b> aqui na fila.`);
+     Depois use <b>Importar lote</b> aqui na fila. No fim ela entrega também <span class="mono">ferramentas.py</span> e
+     <span class="mono">relatorio_lote.md</span> (o que se repetiu no lote): guarde para analisar.`);
   if (name) $("#batch-status").textContent = `Lote ${name} pronto.`;
 });
 // The answers of a batch: one combined object {plan_id: correction}, a list of corrections with plan_id, or one
