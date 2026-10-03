@@ -534,15 +534,16 @@ async function markStatus(status) {
 }
 // ------------------------------------------------------------------ AI help (Claude, ChatGPT...): package out, correction in
 function aiStatus(t, cls) { const el = $("#ai-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
+// The browser downloads straight from the URL (attachment), in a hidden frame: no blob, no script-triggered
+// click after an await, which some browsers drop silently. The status keeps a plain link as a fallback.
 $("#ai-get").addEventListener("click", async () => {
-  if (!S.pid) return; if (S.dirty) await save();
-  aiStatus("Preparando o pacote…");
-  try {
-    const r = await api(`/plans/${S.pid}/ai`); const blob = await r.blob();
-    const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `ia_${S.pid}.zip`;
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    aiStatus(`Baixado ${name}. Envie à IA com o PROMPT.txt e importe o correcao.json (ou cole a resposta).`);
-  } catch (err) { aiStatus("Falhou: " + err.message, "err"); }
+  if (!S.pid) { aiStatus("Abra uma planta da fila primeiro.", "err"); return; }
+  if (S.dirty) await save();
+  const url = `/api/plans/${S.pid}/ai?token=${encodeURIComponent(S.token)}`;
+  let fr = $("#dl-frame"); if (!fr) { fr = document.createElement("iframe"); fr.id = "dl-frame"; fr.hidden = true; document.body.appendChild(fr); }
+  fr.src = url + "&t=" + Date.now();
+  const el = $("#ai-status"); el.className = "small";
+  el.innerHTML = `Baixando o pacote (alguns segundos)… Se não começar, <a href="${esc(url)}" download>clique aqui</a>. Depois envie à IA com o PROMPT.txt.`;
 });
 // Models answer in slightly different shapes; accept the reasonable ones. Text: a ```json fence or the outermost {...}.
 function parseAnswer(text) {

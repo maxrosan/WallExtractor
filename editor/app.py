@@ -431,7 +431,7 @@ def ai_package(pid: str):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, im in (("planta.png", img), ("planta_numerada.png", _ai_overlay(img, plan))):
             b = io.BytesIO()
-            im.save(b, "PNG", optimize=True)
+            im.save(b, "PNG", compress_level=6)
             z.writestr(name, b.getvalue())
         z.writestr("planta.json", json.dumps(plan, ensure_ascii=False, indent=1))
         z.writestr("LEIA-ME.md", AI_README.format(**fmt))
@@ -468,6 +468,15 @@ def export_one(pid: str):
         raise HTTPException(404)
     _png, p = _export_pair(row)
     return JSONResponse(p)
+
+
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    """The page and its scripts are revalidated (ETag) on every load, so a deploy is picked up at once."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
