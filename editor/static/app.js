@@ -534,16 +534,48 @@ async function markStatus(status) {
 }
 // ------------------------------------------------------------------ AI help (Claude, ChatGPT...): package out, correction in
 function aiStatus(t, cls) { const el = $("#ai-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
-// The browser downloads straight from the URL (attachment), in a hidden frame: no blob, no script-triggered
-// click after an await, which some browsers drop silently. The status keeps a plain link as a fallback.
+// The package takes a few seconds: a modal shows each step (save, build on the server, receive with progress)
+// and ends with a real "Baixar" link, so the download never depends on a script click the browser may drop.
+const AI = { url: null };
+function aiStep(name, state, extra) {
+  const li = $(`#ai-steps li[data-step="${name}"]`); li.className = state || "";
+  if (extra !== undefined) { const x = $("[data-extra]", li); if (x) x.textContent = extra; }
+}
+function aiFail(step, msg) { aiStep(step, "fail"); const e = $("#ai-err"); e.textContent = "Falhou: " + msg; e.hidden = false; aiStatus("Falhou: " + msg, "err"); }
+$("#ai-close").addEventListener("click", () => { $("#ai-modal").hidden = true; });
 $("#ai-get").addEventListener("click", async () => {
   if (!S.pid) { aiStatus("Abra uma planta da fila primeiro.", "err"); return; }
-  if (S.dirty) await save();
-  const url = `/api/plans/${S.pid}/ai?token=${encodeURIComponent(S.token)}`;
-  let fr = $("#dl-frame"); if (!fr) { fr = document.createElement("iframe"); fr.id = "dl-frame"; fr.hidden = true; document.body.appendChild(fr); }
-  fr.src = url + "&t=" + Date.now();
-  const el = $("#ai-status"); el.className = "small";
-  el.innerHTML = `Baixando o pacote (alguns segundos)… Se não começar, <a href="${esc(url)}" download>clique aqui</a>. Depois envie à IA com o PROMPT.txt.`;
+  const pid = S.pid;
+  if (AI.url) { URL.revokeObjectURL(AI.url); AI.url = null; }
+  $$("#ai-steps li").forEach(li => { li.className = ""; const x = $("[data-extra]", li); if (x) x.textContent = ""; });
+  $("#ai-ready").hidden = true; $("#ai-err").hidden = true; $("#ai-modal").hidden = false;
+  // 1. save
+  if (S.dirty) { aiStep("save", "active"); await save(); if (S.dirty) return aiFail("save", "não consegui salvar a planta"); aiStep("save", "done"); }
+  else aiStep("save", "done", "");
+  // 2. build: the server answers only when the zip is ready
+  aiStep("build", "active", "0 s"); const t0 = Date.now();
+  const tick = setInterval(() => aiStep("build", "active", `${Math.round((Date.now() - t0) / 1000)} s`), 500);
+  let r;
+  try { r = await fetch(`/api/plans/${pid}/ai`, { headers: { "X-Token": S.token } }); }
+  catch (err) { clearInterval(tick); return aiFail("build", "sem conexão com o servidor"); }
+  clearInterval(tick);
+  if (r.status === 401) { askToken(); return aiFail("build", "token inválido"); }
+  if (!r.ok) return aiFail("build", `o servidor respondeu ${r.status}`);
+  aiStep("build", "done", `${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // 3. receive, with progress when the size is known
+  aiStep("recv", "active"); const total = Number(r.headers.get("content-length")) || 0; const parts = []; let got = 0;
+  try {
+    const reader = r.body.getReader();
+    for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length;
+      aiStep("recv", "active", total ? `${Math.round(100 * got / total)}%` : `${Math.round(got / 1024)} KB`); }
+  } catch (err) { return aiFail("recv", "a conexão caiu durante o download"); }
+  aiStep("recv", "done", `${Math.round(got / 1024)} KB`);
+  // 4. ready
+  const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `ia_${pid}.zip`;
+  AI.url = URL.createObjectURL(new Blob(parts, { type: "application/zip" }));
+  const a = $("#ai-dl"); a.href = AI.url; a.download = name; a.textContent = `Baixar ${name}`;
+  aiStep("done", "done"); $("#ai-ready").hidden = false; a.focus();
+  aiStatus(`Pacote ${name} pronto. Envie à IA com o PROMPT.txt e importe o correcao.json (ou cole a resposta).`);
 });
 // Models answer in slightly different shapes; accept the reasonable ones. Text: a ```json fence or the outermost {...}.
 function parseAnswer(text) {

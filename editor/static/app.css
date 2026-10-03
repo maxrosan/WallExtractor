@@ -72,3 +72,18 @@ td button{font-size:11px;padding:2px 6px}
 .btn-like{display:inline-block}
 .modal-box.wide{width:min(640px,92vw)}
 .modal-box textarea{font-size:12px;padding:6px;border:1px solid var(--line);border-radius:4px;resize:vertical}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.steps li{position:relative;padding-left:26px;color:var(--muted)}
+.steps li::before{content:"";position:absolute;left:2px;top:3px;width:12px;height:12px;border:2px solid var(--line);border-radius:50%}
+.steps li.active{color:var(--ink)}
+.steps li.active::before{border-color:var(--accent);border-right-color:transparent;animation:spin .8s linear infinite}
+.steps li.done{color:var(--ink)}
+.steps li.done::before{content:"✓";border:0;color:var(--door);font-weight:700;top:-1px;width:auto;height:auto}
+.steps li.skip{text-decoration:line-through}
+.steps li.skip::before{border-style:dashed}
+.steps li.fail{color:var(--danger)}
+.steps li.fail::before{content:"✕";border:0;color:var(--danger);font-weight:700;top:-1px;width:auto;height:auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn-big{display:block;text-align:center;font:inherit;font-weight:600;padding:10px 14px;border-radius:6px;margin:6px 0 8px;text-decoration:none;cursor:pointer}
+.btn-big.primary{background:var(--accent);color:var(--accent-ink)}
+.err{color:var(--danger)}
