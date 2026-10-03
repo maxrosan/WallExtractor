@@ -89,6 +89,31 @@ Leitura:
 
 Custo acumulado do pod nas três rodadas mais avaliações: ~US$ 0,17.
 
+## E4: 4x mais dados + correções do editor, GPU local (2026-10-02)
+
+Primeira rodada fora do RunPod: PC "Pichau" (RTX 5060 Ti 16 GB, Blackwell),
+Docker dentro do WSL2 com a imagem `pytorch/pytorch:2.8.0-cuda12.8` (CUDA
+12.8 é o mínimo para essa GPU). Mesma receita de E3 (MiT-B1, 768 px,
+40 épocas, batch 4, `--restyle-prob 0.5`), com:
+
+- CubiCasa5K 1.600 treino / 400 validação (E1-E3: 400 / 100);
+- as 11 plantas brasileiras corrigidas no editor, 9 no treino (repetidas
+  20x, 180 amostras) e 2 na validação.
+
+Download do CubiCasa: 89 min (limite de taxa do Zenodo, 2,7 s por planta).
+Treino: 50 min (75 s por época). Custo: só energia.
+
+| | Parede | Porta | Janela | Parede contorno | Parede hachura 45° |
+|---|---|---|---|---|---|
+| E2 | 0,646 | 0,451 | 0,637 | 0,551 | 0,700 |
+| E3 | 0,634 | 0,443 | 0,618 | 0,766 | 0,889 |
+| **E4** (época 40) | **0,747** | **0,562** | **0,723** | **0,895** | **0,945** |
+
+A validação mudou (402 plantas em vez de 100, incluindo 2 brasileiras), então
+a comparação é indicativa. A melhor época foi a última: o modelo ainda
+melhorava, e mais épocas devem render mais. Modelo em
+`/root/we/results_e4/best.onnx` (55 MB) no Pichau; script em `/root/we/run.sh`.
+
 ## Plantas brasileiras reais (2026-09-24)
 
 Quatro PDFs de projetos residenciais (um repetido) foram recebidos para
