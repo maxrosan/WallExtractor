@@ -196,15 +196,16 @@ consomem o mesmo JSON.
 - Q1 (Qwen3-VL-4B LoRA, 33 plantas): F1 a 1,5% nas 7 BR de validação
   paredes 0,32 (pontas) / 0,77 (comprimento), portas 0,34, janelas 0,27;
   a 5%: 0,68 / 0,95, portas 0,80, janelas 0,70 (`docs/experimentos.md`).
-- Em andamento no Pichau desde 2026-10-03 20:21 UTC (`run_e6_q2.sh`, log
-  `run_e6_q2.log`): 50 correções (40 treino, 10 validação), E6 = receita do
-  E5 com 80 épocas, avaliação de E5 e E6 na validação nova, Q2 = Q1 com as
-  50 plantas (repetição 10) e 2 épocas, avaliação de Q1 e Q2 na validação
-  nova. Dados das 33 plantas guardados em `prepared_corr_33` e `vlm_33`.
+- E6/Q2 PAUSADO a pedido do usuário em 2026-10-03 (o Pichau ficou livre para
+  ele; o E6 parou na época 14 de 80). Para retomar, quando ele liberar:
+  apagar `/root/we/results_e6`, mandar de novo o `editor.env` e rodar
+  `run_e6_q2.sh` (refaz tudo: correções, E6, E5xE6, dados do Qwen, Q1 na
+  validação nova, Q2). Dados das 33 plantas guardados em `prepared_corr_33`
+  e `vlm_33`.
 
 ## Próximos passos
 
-1. Quando `run_e6_q2.sh` terminar: comparar E6 com E5 e Q2 com Q1 na
+1. Quando o usuário liberar o Pichau, retomar `run_e6_q2.sh`; ao terminar: comparar E6 com E5 e Q2 com Q1 na
    validação nova (10 plantas), registrar em `docs/experimentos.md` e, se o
    E6 for melhor, publicar no editor (`PUT /api/model`).
 2. Ramo raster no editor: recortar a região da planta antes de segmentar
