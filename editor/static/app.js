@@ -685,7 +685,7 @@ function warnHtml(warn) {
   return warn.length ? `<div class="warn-list"><b>${warn.length} aviso(s) para conferir:</b><ul>${warn.slice(0, 12).map(w => `<li>${esc(w)}</li>`).join("")}` +
     `${warn.length > 12 ? `<li>… e mais ${warn.length - 12}</li>` : ""}</ul></div>` : "";
 }
-function importOpen(d, from) {
+function importOpen(d, from, statusSel = "#ai-status") {
   if (looksLikePlan(d) && d.plan_id && d.plan_id !== S.pid &&
       !confirm(`Esta resposta é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return;
   if (!looksLikePlan(d)) { const mine = batchEntries(d, from).find(e => e.pid === S.pid); if (!mine) throw new Error("a resposta não tem walls e openings (para várias plantas use Importar lote)"); d = mine.d; }
@@ -693,10 +693,18 @@ function importOpen(d, from) {
   pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
   for (const o of S.plan.openings) if (!o.wall_id) linkOpening(S.plan, o);
   S.sel = null; changed();
-  const warn = planWarnings(S.plan); const el = $("#ai-status"); el.className = "small";
+  const warn = planWarnings(S.plan); const el = $(statusSel); el.className = "small";
   el.innerHTML = `Importado ${esc(from)}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` +
-    (got.notes ? `<br>Notas da IA: ${esc(got.notes)}` : "") + (warn.length ? warnHtml(warn) : `<br>Nenhum aviso na verificação automática.`);
+    (got.notes ? `<br>Notas: ${esc(got.notes)}` : "") + (warn.length ? warnHtml(warn) : `<br>Nenhum aviso na verificação automática.`);
 }
+$("#faces-get").addEventListener("click", async () => {
+  if (!S.pid) { $("#faces-status").textContent = "Abra uma planta da fila primeiro."; return; }
+  const btn = $("#faces-get"), el = $("#faces-status"); btn.disabled = true; el.className = "small muted";
+  const t0 = Date.now(); const tick = setInterval(() => { el.textContent = `Lendo a imagem… ${Math.round((Date.now() - t0) / 1000)} s`; }, 300);
+  try { const d = await api(`/plans/${S.pid}/faces`, { method: "POST" }); clearInterval(tick); importOpen(d, "detector de faces", "#faces-status"); }
+  catch (err) { clearInterval(tick); el.textContent = "Não refeito: " + err.message; el.className = "small err"; }
+  finally { btn.disabled = false; }
+});
 $("#ai-put").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;
   try { importOpen(parseAnswer(await f.text()), f.name); } catch (err) { aiStatus("Não importado: " + err.message, "err"); }

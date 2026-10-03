@@ -25,6 +25,15 @@ página estática) e `Dockerfile` na raiz.
   encaixa nas larguras do quadro.
 - **Escala.** Vem das cotas; a ferramenta Escala recalibra com dois cliques e
   uma distância.
+- **Rascunho pelo detector de faces.** "Refazer com detector de faces"
+  (painel da direita, `POST /api/plans/{id}/faces`) troca a anotação da tela
+  por um rascunho lido direto do render (`wallextractor.faces`: paredes como
+  pares de linhas paralelas a uma espessura estimada da imagem, portas e
+  janelas pelas cores laranja/azul, paredes já divididas nos encontros e
+  vãos). Menos de 1 s por planta. Entra como uma importação: salva como
+  rascunho, mostra os avisos e Ctrl+Z volta. Feito para plantas coloridas
+  de BIM, como o portfólio de SJC; em desenhos de outro estilo pode perder
+  paredes (medição em `docs/experimentos.md`).
 - **Ajuda da IA (Claude, ChatGPT…).** "Pedir ajuda à IA" (painel da direita)
   salva a planta e baixa `ia_<título>.zip` (`GET /api/plans/{id}/ai`) com
   `planta.png` (render base), `planta_numerada.png` (anotação atual por cima,

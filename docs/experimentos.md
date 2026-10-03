@@ -582,3 +582,11 @@ também os scripts e um relatório (`data/ferr`, fora do git).
   (21a e 21b: ~12 px contra 20 px, fora da faixa de 0,7-1,5·t), e com elas as
   portas internas. As janelas da 25_terreo e 25_superior continuam medidas
   com os prolongamentos.
+
+  Ajuste ao trazer o v2 para `wallextractor.faces`: espessuras secundárias a
+  partir de 20% do peso da principal e de 0,6·t (antes 30% e 0,7·t). Na 21b
+  as internas (14 px contra 20) passam a entrar: 28 paredes em vez de 18,
+  6 de 6 portas, comprimento 0,84 -> 0,95; nas outras plantas nada piora. Na
+  21a as internas pesam só 14% e continuam de fora; baixar o corte para 12%
+  as recupera, mas cria paredes falsas no lote do Claude (precisão 1,00 ->
+  0,96) e piora as portas, então ficou em 20%.
