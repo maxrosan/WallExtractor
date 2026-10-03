@@ -473,3 +473,30 @@ O E4 pode ter visto no treino algumas das 7 plantas (a divisão de 11 era
 outra) e mesmo assim perde. Nos estilos redesenhados o E5 também sobe
 (parede contorno 0,936, hachura 0,964). Publicado no editor
 (`PUT /api/model`, sha256 `54466fea…`).
+
+## Q1: Qwen3-VL-4B + LoRA, 2 épocas, GPU local (2026-10-03)
+
+`wallextractor.vlm_data` (CubiCasa 1600 com restyle 0,5 + 26 brasileiras
+x20, lado 1024) → `train_vlm` (LoRA r16 só no LLM, lr 1e-4, acumulação 8,
+2 épocas, 2 h 29 min na RTX 5060 Ti, pico de 16,3 GB) → `eval_vlm`.
+
+| | perda treino | perda validação |
+|---|---|---|
+| época 1 | 0,596 | 0,602 |
+| época 2 | 0,446 | 0,586 |
+
+F1 por tolerância (fração do lado maior da imagem):
+
+| | JSON válido | parede @1,5% | porta @1,5% | janela @1,5% | parede @5% | porta @5% | janela @5% |
+|---|---|---|---|---|---|---|---|
+| Base sem treino, 7 BR | 0 / 7 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Q1, 7 BR de validação | 7 / 7 | 0,32 | 0,34 | 0,27 | 0,68 | 0,80 | 0,70 |
+| Q1, 30 CubiCasa de validação | 29 / 30 | 0,25 | 0,50 | 0,25 | 0,42 | 0,66 | 0,42 |
+
+O modelo base ignora o formato e inventa coordenadas redondas. O Q1 acerta
+a estrutura (número de paredes e aberturas quase igual ao gabarito, F1 de
+0,7 a 0,8 a 5%), mas erra a posição fina: a 1,5% (cerca de 15 px) o F1 cai
+para 0,3. É o limite conhecido da coordenada escrita token a token
+(`docs/escolha-do-modelo.md`). A perda de validação quase não caiu na
+segunda época enquanto a de treino caiu: as 26 brasileiras já foram vistas
+40 vezes cada.
