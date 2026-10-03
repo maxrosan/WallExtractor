@@ -184,24 +184,19 @@ consomem o mesmo JSON.
   das correções em 2026-10-03 (backup em `data/backup_before_rm/`).
 - Direção: o caminho principal é o modelo treinado nas correções (SegFormer
   E5 e depois o Qwen-VL), não refinar heurísticas por estilo de desenho.
-- E5 rodando no Pichau desde 2026-10-03 03:12 UTC, já com o gabarito limpo: E4 + 33 correções
-  (26 treino x20, 7 validação), 120 épocas. `run_e5.sh`, logs
-  `run_e5.log`/`train_e5.log`, resultado em `/root/we/results_e5`.
+- Raster E5 (2026-10-03, publicado no editor): IoU nas 7 brasileiras de
+  validação parede 0,894 / porta 0,673 / janela 0,724 (E4: 0,837 / 0,522 /
+  0,714). Modelo em `/root/we/results_e5/best.onnx`.
 - Qwen3-VL-4B: código no commit `d471451`. `run_vlm.sh` está na fila do
-  Pichau e começa sozinho quando o E5 terminar: dados (CubiCasa 1600 + 26
+  Pichau, rodando desde 2026-10-03 06:02 UTC: dados (CubiCasa 1600 + 26
   correções x20, imagens de lado 1024), teste de memória com 32 exemplos,
   avaliação zero-shot do modelo base nas 7 brasileiras, LoRA 2 épocas,
   avaliação final (7 brasileiras + 30 CubiCasa). Logs `run_vlm.log`,
   `vlm_*.log`.
-- Raster E4: IoU parede 0,747 / porta 0,562 / janela 0,723 (validação
-  CubiCasa + 2 BR); nas 2 brasileiras fora do treino 0,758 / 0,353 / 0,642.
-  Publicado no editor.
 
 ## Próximos passos
 
-1. Quando o E5 terminar: comparar com o E4 (`summary.json`, IoU nas 7
-   brasileiras de validação), registrar em `docs/experimentos.md` e, se
-   melhor, publicar `best.onnx` no editor (`PUT /api/model`).
+1. Acompanhar o Qwen (`run_vlm.sh`, logs `vlm_*.log`).
 2. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.
 3. Quando o Qwen terminar: comparar com o E5 e com o vetorial nas 7

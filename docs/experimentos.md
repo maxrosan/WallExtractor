@@ -452,3 +452,24 @@ As 39 portas inexistentes foram removidas das correções no editor pela API
 |---|---|---|---|---|---|---|
 | V2 | 171 / 179 | 135 | 0,71 | 138 / 167 | 11 | 0,87 |
 | V3 | 167 / 179 | 11 | 0,94 | 142 / 167 | 17 | 0,87 |
+
+## E5: E4 + 33 correções limpas, 120 épocas, GPU local (2026-10-03)
+
+Mesma receita do E4 (CubiCasa 1600/400, 768 px, MiT-B1, restyle 0,5) com as
+33 plantas corrigidas no editor depois da limpeza das 39 portas falsas
+(26 no treino x20, 7 na validação) e 120 épocas em vez de 40. 2 h 49 min
+na RTX 5060 Ti. Melhor época: 115 (a curva quase não sobe depois da 60:
+IoU de parede 0,724 / 0,757 / 0,762 / 0,761 / 0,765 / 0,770 nas épocas 20 a
+120).
+
+| IoU | parede | porta | janela | mIoU |
+|---|---|---|---|---|
+| E4, validação (CubiCasa + 2 BR) | 0,747 | 0,562 | 0,723 | 0,677 |
+| E5, validação (CubiCasa + 7 BR) | 0,772 | 0,622 | 0,757 | 0,717 |
+| E4 nas 7 BR de validação do E5 | 0,837 | 0,522 | 0,714 | 0,691 |
+| E5 nas 7 BR de validação | 0,894 | 0,673 | 0,724 | 0,764 |
+
+O E4 pode ter visto no treino algumas das 7 plantas (a divisão de 11 era
+outra) e mesmo assim perde. Nos estilos redesenhados o E5 também sobe
+(parede contorno 0,936, hachura 0,964). Publicado no editor
+(`PUT /api/model`, sha256 `54466fea…`).
