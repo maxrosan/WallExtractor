@@ -532,49 +532,82 @@ async function markStatus(status) {
   const cur = S.pid; await loadQueue();
   const next = S.plans.find(p => p.status === "pending" && p.id !== cur); if (next) openPlan(next.id); else { hint("Fila de pendentes vazia."); }
 }
-// ------------------------------------------------------------------ Claude: package out, correction in
-function claudeStatus(t, cls) { const el = $("#claude-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
-$("#claude-get").addEventListener("click", async () => {
+// ------------------------------------------------------------------ AI help (Claude, ChatGPT...): package out, correction in
+function aiStatus(t, cls) { const el = $("#ai-status"); el.textContent = t; el.className = "small " + (cls || "muted"); }
+$("#ai-get").addEventListener("click", async () => {
   if (!S.pid) return; if (S.dirty) await save();
-  claudeStatus("Preparando o pacote…");
+  aiStatus("Preparando o pacote…");
   try {
-    const r = await api(`/plans/${S.pid}/claude`); const blob = await r.blob();
-    const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `claude_${S.pid}.zip`;
+    const r = await api(`/plans/${S.pid}/ai`); const blob = await r.blob();
+    const name = (/filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "") || [])[1] || `ia_${S.pid}.zip`;
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    claudeStatus(`Baixado ${name}. Envie ao Claude e importe o correcao.json que ele devolver.`);
-  } catch (err) { claudeStatus("Falhou: " + err.message, "err"); }
+    aiStatus(`Baixado ${name}. Envie à IA com o PROMPT.txt e importe o correcao.json (ou cole a resposta).`);
+  } catch (err) { aiStatus("Falhou: " + err.message, "err"); }
 });
+// Models answer in slightly different shapes; accept the reasonable ones. Text: a ```json fence or the outermost {...}.
+function parseAnswer(text) {
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  let body = fence ? fence[1] : text;
+  const i = body.indexOf("{"), j = body.lastIndexOf("}");
+  if (i < 0 || j < i) throw new Error("não achei um objeto JSON no texto");
+  body = body.slice(i, j + 1);
+  try { return JSON.parse(body); } catch (e) { throw new Error("JSON inválido: " + e.message); }
+}
+// a segment as {start, end} | {x1, y1, x2, y2} | [x1, y1, x2, y2(, t)] | {p1/a, p2/b}
+function segOf(x) {
+  if (Array.isArray(x) && x.length >= 4) return { start: [x[0], x[1]], end: [x[2], x[3]], t: x[4] };
+  if (x && x.x1 !== undefined) return { start: [x.x1, x.y1], end: [x.x2, x.y2], t: x.thickness ?? x.espessura };
+  const s = x && (x.start || x.inicio || x.p1 || x.a), e = x && (x.end || x.fim || x.p2 || x.b);
+  return { start: s, end: e, t: x && (x.thickness ?? x.espessura) };
+}
+function typeOf(o, bucket) {
+  const t = String((o && (o.type || o.tipo)) || bucket || "").toLowerCase();
+  if (/^(window|janela|j)/.test(t) || /^j\d/i.test(String(o && o.code || ""))) return "window";
+  return "door";
+}
 // The correction replaces walls and openings (scale, codes and source stay); ids are made unique, openings whose
-// wall is gone lose the link, and a different image size is rescaled. Ctrl+Z restores the previous annotation.
+// wall is unknown are linked by geometry, and a different image size is rescaled. Ctrl+Z restores the previous one.
 function importPlan(d) {
-  if (!d || !Array.isArray(d.walls) || !Array.isArray(d.openings)) throw new Error("o arquivo precisa ter walls e openings");
-  if (d.plan_id && d.plan_id !== S.pid && !confirm(`Este arquivo é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return null;
-  const k = d.image && d.image.width ? S.plan.image.width / d.image.width : 1;
-  const pt = p => { if (!Array.isArray(p) || p.length < 2 || !isFinite(p[0]) || !isFinite(p[1])) throw new Error("ponto inválido: " + JSON.stringify(p)); return [p[0] * k, p[1] * k]; };
+  if (d && !d.walls && (d.paredes || d.correcao || d.plan)) d = d.correcao || d.plan || { ...d, walls: d.paredes, openings: d.aberturas };
+  const rawOpen = d && (d.openings || d.aberturas ||
+    (d.doors || d.windows ? [...(d.doors || []).map(x => ({ x, b: "door" })), ...(d.windows || []).map(x => ({ x, b: "window" }))] : null));
+  if (!d || !Array.isArray(d.walls) || !Array.isArray(rawOpen)) throw new Error("a resposta precisa ter walls e openings");
+  if (d.plan_id && d.plan_id !== S.pid && !confirm(`Esta resposta é da planta ${d.plan_id}, não da aberta (${S.pid}). Importar mesmo assim?`)) return null;
+  const k = d.image && Number(d.image.width) > 0 ? S.plan.image.width / Number(d.image.width) : 1;
+  const pt = p => { if (!Array.isArray(p) || p.length < 2 || !isFinite(p[0]) || !isFinite(p[1])) throw new Error("ponto inválido: " + JSON.stringify(p)); return [Number(p[0]) * k, Number(p[1]) * k]; };
   const walls = [], ids = new Map();
   for (const w of d.walls) {
-    const id = nextId("w", walls); ids.set(String(w.id), id);
-    const t = Number(w.thickness) > 0 ? Number(w.thickness) * k : medianThickness();
-    walls.push({ id, start: pt(w.start), end: pt(w.end), thickness: t, kind: w.kind || null, polygon: null });
+    const sg = segOf(w); const id = nextId("w", walls); if (w && w.id !== undefined) ids.set(String(w.id), id);
+    const t = Number(sg.t) > 0 ? Number(sg.t) * k : medianThickness();
+    walls.push({ id, start: pt(sg.start), end: pt(sg.end), thickness: t, kind: (w && w.kind) || null, polygon: null });
   }
   const openings = [];
-  for (const o of d.openings) {
-    const start = pt(o.start), end = pt(o.end);
-    openings.push({ id: nextId("o", openings), type: o.type === "window" ? "window" : "door", start, end, width: dist(start, end),
-      wall_id: ids.get(String(o.wall_id)) || null, polygon: null, confidence: 1, code: o.code || null, width_source: "claude",
-      height_m: o.height_m ?? null, sill_m: o.sill_m ?? null, kind: o.kind || null });
+  for (const item of rawOpen) {
+    const o = item && item.x !== undefined && item.b ? item.x : item, bucket = item && item.b;
+    const sg = segOf(o); const start = pt(sg.start), end = pt(sg.end);
+    openings.push({ id: nextId("o", openings), type: typeOf(o, bucket), start, end, width: dist(start, end),
+      wall_id: (o && o.wall_id !== undefined && ids.get(String(o.wall_id))) || null, polygon: null, confidence: 1,
+      code: (o && (o.code || o.codigo)) || null, width_source: "ai", height_m: (o && o.height_m) ?? null, sill_m: (o && o.sill_m) ?? null,
+      kind: (o && o.kind) || null });
   }
-  return { walls, openings };
+  return { walls, openings, notes: d.notas || d.notes || null };
 }
-$("#claude-put").addEventListener("change", async e => {
+function applyImport(got, from) {
+  pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
+  for (const o of S.plan.openings) if (!o.wall_id) attachOpening(o);  // needs the new walls in place
+  S.sel = null; changed();
+  aiStatus(`Importado ${from}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` + (got.notes ? ` Notas da IA: ${got.notes}` : ""));
+}
+$("#ai-put").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;
-  try {
-    const got = importPlan(JSON.parse(await f.text())); if (!got) return;
-    pushUndo(); S.plan.walls = got.walls; S.plan.openings = got.openings;
-    for (const o of S.plan.openings) if (!o.wall_id) attachOpening(o);  // needs the new walls in place
-    S.sel = null; changed();
-    claudeStatus(`Importado ${f.name}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.`);
-  } catch (err) { claudeStatus("Não importado: " + err.message, "err"); }
+  try { const got = importPlan(parseAnswer(await f.text())); if (got) applyImport(got, f.name); }
+  catch (err) { aiStatus("Não importado: " + err.message, "err"); }
+});
+$("#ai-paste").addEventListener("click", () => { if (!S.pid) return; $("#paste-text").value = ""; $("#paste-modal").hidden = false; $("#paste-text").focus(); });
+$("#paste-cancel").addEventListener("click", () => { $("#paste-modal").hidden = true; });
+$("#paste-ok").addEventListener("click", () => {
+  try { const got = importPlan(parseAnswer($("#paste-text").value)); $("#paste-modal").hidden = true; if (got) applyImport(got, "texto colado"); }
+  catch (err) { $("#paste-modal").hidden = true; aiStatus("Não importado: " + err.message, "err"); }
 });
 
 $("#mark-corrected").addEventListener("click", () => markStatus("corrected"));

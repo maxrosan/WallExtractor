@@ -278,16 +278,19 @@ def _export_pair(row: dict) -> tuple[bytes, dict]:
     return buf.getvalue(), p
 
 
-CLAUDE_README = """# Planta para correção com o Claude
+AI_README = """# Planta para correção com IA (Claude, ChatGPT ou outro modelo com visão)
 
 Arquivos:
 - `planta.png`: a planta como o editor mostra ({w} x {h} px).
 - `planta_numerada.png`: a mesma imagem com a anotação atual por cima: paredes em vermelho
   (w1, w2, ...), portas em verde e janelas em azul (o1, o2, ...).
 - `planta.json`: a anotação atual (saída da máquina ou a última correção salva).
+- `conferir.py`: desenha um `correcao.json` sobre `planta.png` (`python conferir.py correcao.json`
+  gera `conferencia.png`; precisa só do Pillow).
+- `PROMPT.txt`: o pedido, pronto para colar no chat junto com os arquivos.
 
-Coordenadas em pixels de `planta.png`, origem no canto superior esquerdo, y para baixo.
-Escala: {scale}.
+Coordenadas em pixels de `planta.png`, origem no canto superior esquerdo, x para a direita, y para
+baixo. Escala: {scale}.
 
 A anotação atual é um rascunho automático: pode ter paredes picotadas em muitos pedaços, paredes
 que não existem, aberturas faltando ou com o tipo errado.
@@ -309,21 +312,82 @@ que não existem, aberturas faltando ou com o tipo errado.
   é interrompida: um trecho termina numa borda do vão e outro começa na outra.
 - `openings`: `{{"id": "o1", "type": "door" | "window", "start": [x, y], "end": [x, y],
   "wall_id": "w3"}}`, sobre o eixo da parede, de uma borda do vão até a outra (a largura da abertura);
-  `wall_id` é um dos trechos vizinhos.
+  `wall_id` é um dos trechos vizinhos (pode ficar de fora: o editor liga pela geometria).
+
+Exemplo de resposta (uma parede com uma porta no meio):
+
+```json
+{{"plan_id": "{pid}", "image": {{"width": {w}, "height": {h}}},
+ "walls": [{{"id": "w1", "start": [100, 200], "end": [300, 200], "thickness": 12}},
+           {{"id": "w2", "start": [380, 200], "end": [600, 200], "thickness": 12}}],
+ "openings": [{{"id": "o1", "type": "door", "start": [300, 200], "end": [380, 200], "wall_id": "w1"}}],
+ "notas": "dúvidas, se houver"}}
+```
 
 ## Pedido
 
 Compare a anotação com `planta.png`, corrija paredes e aberturas (posição, pontas, espessura, tipo,
-o que falta e o que sobra) e devolva um arquivo `correcao.json` com a lista COMPLETA de `walls` e
-`openings` (não só as mudanças), JSON válido, mantendo `plan_id` = "{pid}" e
-`image` = {{"width": {w}, "height": {h}}}. Pode incluir `"notas": "..."` com dúvidas.
-Se puder rodar código, comece do `planta.json` (juntar trechos alinhados ajuda) e confira desenhando
-o resultado sobre `planta.png`. No editor, "Importar do Claude" carrega o arquivo; nada é marcado como
-corrigido até o revisor conferir.
+o que falta e o que sobra) e devolva `correcao.json` com a lista COMPLETA de `walls` e `openings`
+(não só as mudanças), JSON válido, com `plan_id` = "{pid}" e `image` = {{"width": {w}, "height": {h}}}.
+Coordenadas sempre em pixels de `planta.png`, mesmo que a imagem tenha sido reduzida para você ver.
+Se puder rodar código: comece do `planta.json` (juntar trechos alinhados ajuda), rode
+`python conferir.py correcao.json`, olhe `conferencia.png` e ajuste antes de entregar. Se não puder
+gerar arquivo, responda só com o JSON num bloco de código: o editor aceita o texto colado.
+No editor, "Importar correção" (arquivo) ou "Colar resposta" (texto) carrega o resultado; nada é
+marcado como corrigido até o revisor conferir.
 """
 
+AI_PROMPT = """Anexei os arquivos de uma planta baixa (planta.png, planta_numerada.png, planta.json, LEIA-ME.md
+e conferir.py; se vierem num .zip, descompacte). Siga o LEIA-ME.md: corrija as paredes, portas e
+janelas de planta.json comparando com planta.png e me devolva correcao.json com a lista completa, em
+pixels de planta.png ({w} x {h}), plan_id "{pid}". Se puder rodar código, confira com conferir.py antes
+de entregar. Se não puder gerar arquivo, responda só com o JSON num bloco de código.
+"""
 
-def _claude_overlay(img: Image.Image, plan: dict) -> Image.Image:
+AI_CHECK = '''# Desenha correcao.json sobre planta.png: paredes em vermelho, portas em verde, janelas em azul.
+# Uso: python conferir.py correcao.json  ->  conferencia.png
+import json, sys
+from PIL import Image, ImageDraw
+
+path = sys.argv[1] if len(sys.argv) > 1 else "correcao.json"
+plan = json.load(open(path, encoding="utf-8"))
+img = Image.open("planta.png").convert("RGB")
+iw = (plan.get("image") or {}).get("width") or img.width
+if iw != img.width:
+    print(f"aviso: image.width {iw} diferente de planta.png ({img.width}); as coordenadas devem ser de planta.png")
+img = Image.blend(img, Image.new("RGB", img.size, "white"), 0.35)
+d = ImageDraw.Draw(img)
+lw = max(2, round(max(img.size) / 500))
+for w in plan.get("walls", []):
+    d.line([tuple(w["start"]), tuple(w["end"])], fill=(200, 30, 30), width=lw)
+for o in plan.get("openings", []):
+    col = (20, 140, 70) if o.get("type") == "door" else (40, 90, 220)
+    d.line([tuple(o["start"]), tuple(o["end"])], fill=col, width=lw * 3)
+for x in plan.get("walls", []) + plan.get("openings", []):
+    d.text(((x["start"][0] + x["end"][0]) / 2 + 4, (x["start"][1] + x["end"][1]) / 2 + 4), str(x.get("id", "")), fill=(0, 0, 0))
+img.save("conferencia.png")
+print(f"conferencia.png: {len(plan.get('walls', []))} paredes, {len(plan.get('openings', []))} aberturas")
+'''
+
+
+def _ai_plan(plan: dict, pid: str, title: str, size) -> dict:
+    """The annotation trimmed to what a model needs to read and write back, coordinates to 0.1 px."""
+    def r(p):
+        return [round(p[0], 1), round(p[1], 1)]
+
+    openings = []
+    for o in plan.get("openings", []):
+        item = {"id": o["id"], "type": o.get("type"), "start": r(o["start"]), "end": r(o["end"]),
+                "wall_id": o.get("wall_id"), "code": o.get("code")}
+        openings.append({k: v for k, v in item.items() if v is not None})
+    return {"plan_id": pid, "title": title, "image": {"width": size[0], "height": size[1]},
+            "scale": plan.get("scale") or {"px_per_m": None},
+            "walls": [{"id": w["id"], "start": r(w["start"]), "end": r(w["end"]), "thickness": round(w["thickness"], 1)}
+                      for w in plan.get("walls", [])],
+            "openings": openings}
+
+
+def _ai_overlay(img: Image.Image, plan: dict) -> Image.Image:
     from PIL import ImageDraw, ImageFont
 
     out = Image.blend(img.convert("RGB"), Image.new("RGB", img.size, "white"), 0.35)
@@ -351,30 +415,31 @@ def _claude_overlay(img: Image.Image, plan: dict) -> Image.Image:
     return out
 
 
-@app.get("/api/plans/{pid}/claude", dependencies=[Depends(auth)])
-def claude_package(pid: str):
-    """Zip for asking Claude to correct a plan: image, numbered overlay, current annotation, instructions."""
+@app.get("/api/plans/{pid}/ai", dependencies=[Depends(auth)])
+def ai_package(pid: str):
+    """Zip for asking a vision model (Claude, ChatGPT...) to correct a plan: image, numbered overlay,
+    trimmed annotation, instructions, a ready prompt and a script that draws the answer for checking."""
     row = store.get(pid)
     if row is None or not os.path.isfile(store.render_path(pid)):
         raise HTTPException(404)
-    plan = json.loads(json.dumps(row["corrected"] or row["machine"]))
     img = Image.open(store.render_path(pid)).convert("RGB")
-    plan["plan_id"] = pid
-    plan["title"] = row["title"]
-    plan["image"] = dict(plan.get("image") or {}, width=img.size[0], height=img.size[1])
-    ppm = (plan.get("scale") or {}).get("px_per_m")
-    scale = f"{ppm:.2f} px por metro" if ppm else "desconhecida"
+    plan = _ai_plan(row["corrected"] or row["machine"], pid, row["title"], img.size)
+    ppm = plan["scale"].get("px_per_m")
+    fmt = dict(w=img.size[0], h=img.size[1], pid=pid,
+               scale=f"{ppm:.2f} px por metro (paredes costumam ter 0,10 a 0,25 m)" if ppm else "desconhecida")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for name, im in (("planta.png", img), ("planta_numerada.png", _claude_overlay(img, plan))):
+        for name, im in (("planta.png", img), ("planta_numerada.png", _ai_overlay(img, plan))):
             b = io.BytesIO()
             im.save(b, "PNG", optimize=True)
             z.writestr(name, b.getvalue())
         z.writestr("planta.json", json.dumps(plan, ensure_ascii=False, indent=1))
-        z.writestr("LEIA-ME.md", CLAUDE_README.format(w=img.size[0], h=img.size[1], scale=scale, pid=pid))
+        z.writestr("LEIA-ME.md", AI_README.format(**fmt))
+        z.writestr("PROMPT.txt", AI_PROMPT.format(**fmt))
+        z.writestr("conferir.py", AI_CHECK)
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in row["title"])[:60] or pid
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="claude_{safe}.zip"'})
+                    headers={"Content-Disposition": f'attachment; filename="ia_{safe}.zip"'})
 
 
 @app.get("/api/export", dependencies=[Depends(auth)])

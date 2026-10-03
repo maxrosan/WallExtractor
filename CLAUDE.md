@@ -24,11 +24,11 @@ editor (`scripts/eval_openings.py`).
   treino e avaliação do SegFormer (ramo raster, para PDF escaneado ou imagem).
 - `editor/`: editor de anotações (FastAPI + Konva, `static/app.js` em JS puro).
   `Dockerfile` na raiz.
-  "Pedir ajuda ao Claude" baixa um zip (`planta.png`, `planta_numerada.png`,
-  `planta.json`, `LEIA-ME.md`); quando o usuário trouxer esse zip, devolva um
-  `correcao.json` no mesmo formato (pixels de `planta.png`, paredes
-  interrompidas nos vãos, aberturas no vão com `wall_id`) para ele importar
-  com "Importar do Claude".
+  "Pedir ajuda à IA" baixa `ia_<título>.zip` (`planta.png`, `planta_numerada.png`,
+  `planta.json`, `LEIA-ME.md`, `PROMPT.txt`, `conferir.py`), feito para o Claude
+  ou o ChatGPT; quando o usuário trouxer esse zip, siga o LEIA-ME e devolva
+  `correcao.json` (pixels de `planta.png`, paredes interrompidas nos vãos,
+  aberturas no vão), conferido com `conferir.py`.
 - `wallextractor/vlm_data.py`, `train_vlm.py`, `eval_vlm.py`: fine-tuning do
   Qwen3-VL (LoRA só no modelo de linguagem, visão congelada). Alvo compacto
   `{"walls":[[x1,y1,x2,y2,t]],"doors":[...],"windows":[...]}` em 0–1000

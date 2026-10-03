@@ -25,17 +25,22 @@ página estática) e `Dockerfile` na raiz.
   encaixa nas larguras do quadro.
 - **Escala.** Vem das cotas; a ferramenta Escala recalibra com dois cliques e
   uma distância.
-- **Ajuda do Claude.** "Pedir ajuda ao Claude" (painel da direita) salva a
-  planta e baixa `claude_<título>.zip` (`GET /api/plans/{id}/claude`) com
+- **Ajuda da IA (Claude, ChatGPT…).** "Pedir ajuda à IA" (painel da direita)
+  salva a planta e baixa `ia_<título>.zip` (`GET /api/plans/{id}/ai`) com
   `planta.png` (render base), `planta_numerada.png` (anotação atual por cima,
-  paredes w1… e aberturas o1… numeradas), `planta.json` (a anotação, em
-  pixels de `planta.png`) e `LEIA-ME.md` com o formato da resposta. O Claude
-  devolve `correcao.json` no mesmo formato; "Importar do Claude" troca as
-  paredes e aberturas da tela por ele (escala, quadro e origem ficam), liga
-  cada abertura à sua parede, salva como rascunho e não muda o status: o
-  revisor confere, refina e marca como corrigida. Ctrl+Z volta à anotação
-  anterior. Um arquivo de outra planta pede confirmação; outro tamanho de
-  imagem é reescalado.
+  paredes w1… e aberturas o1… numeradas), `planta.json` (só paredes e
+  aberturas, em pixels de `planta.png`), `LEIA-ME.md` (o que é parede, porta
+  e janela, as convenções de eixo, espessura e vão, e um exemplo de
+  resposta), `PROMPT.txt` (o pedido pronto para colar no chat) e `conferir.py`
+  (desenha a resposta sobre a planta, para o modelo conferir antes de
+  entregar). A resposta entra por "Importar correção" (arquivo) ou "Colar
+  resposta" (texto do chat; o JSON é achado mesmo dentro de um bloco de
+  código). A importação aceita `door`/`window` ou porta/janela, segmentos
+  como `start`/`end`, `x1…y2` ou `[x1, y1, x2, y2, t]`, `doors`/`windows`
+  separados, ids e `wall_id` ausentes (a abertura é ligada pela geometria) e
+  coordenadas de uma imagem reduzida (reescala por `image.width`). Troca as
+  paredes e aberturas da tela (escala, quadro e origem ficam), salva como
+  rascunho e não muda o status; Ctrl+Z volta à anotação anterior.
 - **Exportação para treino.** `GET /api/export?status=corrected` devolve um
   zip com `<id>.png` (lado maior 1024 px) e `<id>.json` (WallPlan nas
   coordenadas dessa imagem, com metros). `scripts/fetch_corrections.py` baixa
