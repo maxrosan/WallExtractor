@@ -24,6 +24,12 @@ editor (`scripts/eval_openings.py`).
   treino e avaliação do SegFormer (ramo raster, para PDF escaneado ou imagem).
 - `editor/`: editor de anotações (FastAPI + Konva, `static/app.js` em JS puro).
   `Dockerfile` na raiz.
+- `wallextractor/vlm_data.py`, `train_vlm.py`, `eval_vlm.py`: fine-tuning do
+  Qwen3-VL (LoRA só no modelo de linguagem, visão congelada). Alvo compacto
+  `{"walls":[[x1,y1,x2,y2,t]],"doors":[...],"windows":[...]}` em 0–1000
+  relativo à imagem, paredes ordenadas de cima para baixo; `decode_text`
+  aceita resposta truncada e religa aberturas às paredes pela geometria.
+  Métrica: F1 de paredes/portas/janelas a 1,5% e 5% do lado maior.
 - `scripts/eval_openings.py`: mede portas e janelas do ramo vetorial contra
   as correções do editor. Use antes e depois de mexer em `find_openings`.
 - `scripts/enqueue.py`, `fetch_corrections.py`: enviar PDFs ao editor e
@@ -37,7 +43,8 @@ editor (`scripts/eval_openings.py`).
 
 Dependências em camadas: `requirements.txt` (inferência, só CPU, **sem
 torch**), `requirements-editor.txt` (+ FastAPI), `requirements-train.txt`
-(+ transformers/onnx; o torch vem da imagem de treino).
+(+ transformers/onnx; o torch vem da imagem de treino), `requirements-vlm.txt`
+(+ transformers 4.57.6 fixo, peft, para o Qwen3-VL).
 
 ```
 # inferência (tenta o vetorial; o raster só roda se o vetorial falhar e exige --model)
@@ -59,6 +66,11 @@ python scripts/fetch_corrections.py --editor URL --token T --out data/correction
 python -m wallextractor.train_seg --data data/prepared --extra-train data/prepared_corr/train \
     --extra-val data/prepared_corr/val --out runs/b1 --epochs 15 --size 512 --batch 8 --export-onnx
 python -m wallextractor.eval_seg --model runs/b1/best --data data/prepared --split val --styles solid,hatch45,outline
+
+# Qwen3-VL (GPU): dados, treino LoRA, avaliação (base sem --adapter = zero-shot)
+python -m wallextractor.vlm_data --cubicasa data/prepared --corrections data/prepared_corr --out data/vlm     --side 1024 --repeat-corr 20 --restyle-prob 0.5
+python -m wallextractor.train_vlm --data data/vlm --out runs/vlm4b --epochs 2 --grad-accum 8
+python -m wallextractor.eval_vlm --data data/vlm --adapter runs/vlm4b/best --source editor --out runs/vlm4b/eval.json
 
 # editor local
 EDITOR_DATA=./data/editor EDITOR_TOKEN=segredo uvicorn editor.app:app --port 8000
@@ -137,6 +149,10 @@ consomem o mesmo JSON.
   `C:\we\*.sh` (LF) e rode `wsl -d Ubuntu-24.04 -u root -- bash /mnt/c/we/x.sh`.
 - `executar_powershell` tem limite de ~60 s; para mais, `iniciar_tarefa`
   ou `setsid nohup` dentro do WSL.
+- Qwen: imagem `we-vlm` (= `we-train` + `requirements-vlm.txt`), cópia do repo
+  em `/root/we/repo_vlm` (atualizada por `git bundle` em `C:\we\we.bundle`,
+  sem push), pesos em `/root/we/hf` (cache do Hugging Face), pipeline
+  `run_vlm.sh`, resultados em `/root/we/results_vlm`.
 - Arquivo do Pichau para cá: `publicar_arquivo` (link temporário, use
   validade curta).
 
@@ -170,6 +186,12 @@ consomem o mesmo JSON.
 - E5 rodando no Pichau desde 2026-10-03 03:12 UTC, já com o gabarito limpo: E4 + 33 correções
   (26 treino x20, 7 validação), 120 épocas. `run_e5.sh`, logs
   `run_e5.log`/`train_e5.log`, resultado em `/root/we/results_e5`.
+- Qwen3-VL-4B: código no commit `d471451`. `run_vlm.sh` está na fila do
+  Pichau e começa sozinho quando o E5 terminar: dados (CubiCasa 1600 + 26
+  correções x20, imagens de lado 1024), teste de memória com 32 exemplos,
+  avaliação zero-shot do modelo base nas 7 brasileiras, LoRA 2 épocas,
+  avaliação final (7 brasileiras + 30 CubiCasa). Logs `run_vlm.log`,
+  `vlm_*.log`.
 - Raster E4: IoU parede 0,747 / porta 0,562 / janela 0,723 (validação
   CubiCasa + 2 BR); nas 2 brasileiras fora do treino 0,758 / 0,353 / 0,642.
   Publicado no editor.
@@ -181,4 +203,5 @@ consomem o mesmo JSON.
    melhor, publicar `best.onnx` no editor (`PUT /api/model`).
 2. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.
-3. Preparar o fine-tuning do Qwen-VL com os pares imagem + JSON do editor.
+3. Quando o Qwen terminar: comparar com o E5 e com o vetorial nas 7
+   brasileiras de validação e registrar em `docs/experimentos.md`.
