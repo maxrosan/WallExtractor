@@ -161,18 +161,24 @@ consomem o mesmo JSON.
   (no ar: `e1c8cc1`), então a branch antiga pode ser apagada.
 - Fila do editor: 33 plantas, todas corrigidas (4 de escritório, 29 de SJC).
   Cópia local em `data/gt` (`eval_openings.py --download`).
-- Vetorial V2 (tol. 25 cm, 33 plantas): portas 210/218 com 96 falsas
-  (F1 0,80), janelas 138/167 com 11 falsas (F1 0,87); nenhuma parede
-  corrigida. Nas 22 SJC novas: portas 143/144 mas 69 falsas, janelas 93/105
-  sem falsas.
+- Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas):
+  portas 167/218 com 11 falsas, janelas 142/167 com 17 falsas. O gabarito
+  ainda tem ~39 portas falsas herdadas da V2 (ver `docs/experimentos.md`, V3);
+  o usuário decidiu manter as correções como estão.
+- Direção: o caminho principal é o modelo treinado nas correções (SegFormer
+  E5 e depois o Qwen-VL), não refinar heurísticas por estilo de desenho.
+- E5 rodando no Pichau desde 2026-10-03 03:06 UTC: E4 + 33 correções
+  (26 treino x20, 7 validação), 120 épocas. `run_e5.sh`, logs
+  `run_e5.log`/`train_e5.log`, resultado em `/root/we/results_e5`.
 - Raster E4: IoU parede 0,747 / porta 0,562 / janela 0,723 (validação
   CubiCasa + 2 BR); nas 2 brasileiras fora do treino 0,758 / 0,353 / 0,642.
   Publicado no editor.
 
 ## Próximos passos
 
-1. Atacar as portas falsas do vetorial (94 das 96 sem etiqueta P, quase
-   todas em SJC: armário, louça, piso), medindo nas 33 plantas de `data/gt`.
+1. Quando o E5 terminar: comparar com o E4 (`summary.json`, IoU nas 7
+   brasileiras de validação), registrar em `docs/experimentos.md` e, se
+   melhor, publicar `best.onnx` no editor (`PUT /api/model`).
 2. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.
-3. E5 no Pichau: mais épocas (a melhor foi a última) e as novas correções.
+3. Preparar o fine-tuning do Qwen-VL com os pares imagem + JSON do editor.
