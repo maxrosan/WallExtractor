@@ -178,9 +178,9 @@ consomem o mesmo JSON.
 
 ## Estado (2026-10-03)
 
-- `main` = `claude/vector-false-doors` (V3, Qwen, botão do Claude), publicada
-  no EasyPanel em 2026-10-03 (commit `d369760`). A branch
-  `claude/jolly-brown-ij69cl` pode ser apagada.
+- Trabalho direto na `main` (a branch `claude/vector-false-doors` acompanha).
+  O EasyPanel constrói da `main`; cada mudança no editor é publicada com
+  redeploy. A branch `claude/jolly-brown-ij69cl` pode ser apagada.
 - Fila do editor: 50 plantas, todas corrigidas (4 de escritório, 29 vetoriais
   de SJC, 17 do portfólio raster de SJC, as do portfólio com ajuda de IA em
   lote). Cópia local antiga em `data/gt` (33 plantas).
