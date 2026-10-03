@@ -590,3 +590,15 @@ também os scripts e um relatório (`data/ferr`, fora do git).
   21a as internas pesam só 14% e continuam de fora; baixar o corte para 12%
   as recupera, mas cria paredes falsas no lote do Claude (precisão 1,00 ->
   0,96) e piora as portas, então ficou em 20%.
+- Lote do GPT com o modelo de relatório (17a, 17b, 18a, 18b): o modelo
+  funcionou, todas as tabelas vieram com números (631 trechos de parede do
+  rascunho viraram 87; 218 paredes inexistentes; 4 tipos trocados, quase
+  sempre a J1 entre banheiro e A.S.). As ferramentas dele seguem sendo de
+  inspeção, sem detector. As sugestões para o rascunho coincidem com as do
+  Claude (pares de faces, juntar antes de dividir, máscara para cota,
+  piso e louça, abertura pelos batentes e caixilho).
+- Detector de faces nessas 4 plantas de edícula (gabarito do GPT), F1 a 1,5%:
+  pontas 0,32-0,45 (E5: 0,05-0,10), mas perde paredes (10-16 trechos contra
+  20-25; comprimento 0,79-0,92 contra 0,84-0,95) e as aberturas variam
+  (portas 0,25-1,00, janelas 0-0,80). Confirma que ele é um acelerador para
+  o estilo em que foi escrito, não um rascunho geral.
