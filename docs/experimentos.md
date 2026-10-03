@@ -119,7 +119,7 @@ original):
 
 | | Parede | Porta | Janela |
 |---|---|---|---|
-| 2 fora do treino (SJC m06-c, casa Alexandre) | 0,758 | 0,353 | 0,642 |
+| 2 fora do treino (SJC m06-c, casa habitacional) | 0,758 | 0,353 | 0,642 |
 | 9 usadas no treino (20x) | 0,884 | 0,681 | 0,745 |
 
 O número honesto é o das 2 fora do treino: parede e janela no nível do
@@ -334,7 +334,7 @@ detector de folha fechada.
 Testado e descartado: (a) manter candidatos sem etiqueta com folha e arco em
 desenhos etiquetados: recuperaria 3 portas da Minha Casa Minha Vida, mas criou
 50+ falsos positivos (móveis e louças com arco); (b) aceitar caixilho de janela
-além do fim da parede (mesmo caso de canto, janelas J3 das duas Max Rosan):
+além do fim da parede (mesmo caso de canto, janelas J3 dos dois projetos residenciais PR_01 e PR_02):
 piorou janelas e portas porque os candidatos novos disputam as etiquetas.
 
 Ficam de fora: portas e janelas sem etiqueta (Minha Casa Minha Vida), janelas
