@@ -289,16 +289,37 @@ Arquivos:
 Coordenadas em pixels de `planta.png`, origem no canto superior esquerdo, y para baixo.
 Escala: {scale}.
 
-Formato de `planta.json` (e da resposta):
-- `walls`: cada parede é o eixo de um trecho de parede desenhado, `{{"id": "w1", "start": [x, y],
-  "end": [x, y], "thickness": px}}`. Nos vãos de porta e janela a parede é interrompida.
-- `openings`: `{{"id": "o1", "type": "door" | "window", "start": [x, y], "end": [x, y],
-  "wall_id": "w3"}}`, no vão, sobre a linha da parede; `start`-`end` é a largura do vão.
+A anotação atual é um rascunho automático: pode ter paredes picotadas em muitos pedaços, paredes
+que não existem, aberturas faltando ou com o tipo errado.
 
-Pedido ao Claude: compare a anotação com a planta, corrija paredes e aberturas (posição, pontas,
-espessura, o que falta e o que sobra) e devolva um arquivo `correcao.json` com o mesmo formato,
-mantendo `plan_id` = "{pid}" e `image` = {{"width": {w}, "height": {h}}}. No editor, use
-"Importar do Claude" para carregar o arquivo; nada é salvo como corrigido até você conferir.
+## O que anotar
+
+- Paredes: só as paredes da edificação cortadas pela planta (alvenaria, desenhadas com duas linhas
+  paralelas, às vezes com preenchimento ou hachura). Não são paredes: projeção da cobertura, linhas
+  de cota e de chamada, textos, móveis, louças, piso/azulejo, escadas, eixos e o contorno de áreas
+  abertas (garagem coberta, varanda) quando não há parede desenhada.
+- Portas: folha (linha) com o arco de abertura, ou porta de correr. Janelas: caixilho (linhas finas
+  dentro da espessura da parede). Etiquetas ajudam: P1, P2… são portas; J1, J2… são janelas.
+
+## Formato de `planta.json` e da resposta
+
+- `walls`: `{{"id": "w1", "start": [x, y], "end": [x, y], "thickness": px}}`. A linha vai pelo eixo
+  da parede (no meio entre as duas faces) e `thickness` é a distância entre as faces, em pixels.
+  Paredes que se encontram terminam no cruzamento dos eixos. Em cada vão de porta ou janela a parede
+  é interrompida: um trecho termina numa borda do vão e outro começa na outra.
+- `openings`: `{{"id": "o1", "type": "door" | "window", "start": [x, y], "end": [x, y],
+  "wall_id": "w3"}}`, sobre o eixo da parede, de uma borda do vão até a outra (a largura da abertura);
+  `wall_id` é um dos trechos vizinhos.
+
+## Pedido
+
+Compare a anotação com `planta.png`, corrija paredes e aberturas (posição, pontas, espessura, tipo,
+o que falta e o que sobra) e devolva um arquivo `correcao.json` com a lista COMPLETA de `walls` e
+`openings` (não só as mudanças), JSON válido, mantendo `plan_id` = "{pid}" e
+`image` = {{"width": {w}, "height": {h}}}. Pode incluir `"notas": "..."` com dúvidas.
+Se puder rodar código, comece do `planta.json` (juntar trechos alinhados ajuda) e confira desenhando
+o resultado sobre `planta.png`. No editor, "Importar do Claude" carrega o arquivo; nada é marcado como
+corrigido até o revisor conferir.
 """
 
 
