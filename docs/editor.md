@@ -59,9 +59,13 @@ página estática) e `Dockerfile` na raiz.
   `correcoes/progresso.txt`, entrega `correcoes.json` (`{"<plan_id>": correção}`)
   e, se for interrompida, retoma com "continue". Depois de todas as plantas
   (as correções vêm antes), entrega também `ferramentas.py` (os scripts
-  usados, generalizados) e `relatorio_lote.md` (problemas do rascunho por
-  frequência no lote, o que um script resolve e o que exigiu olhar a
-  imagem, o que mudar no rascunho). "Importar lote" aceita o
+  usados, generalizados) e `relatorio_lote.md`, preenchendo um modelo com
+  tabelas fixas: problemas do rascunho com plantas e ocorrências, o que um
+  script resolve (função, parâmetros, onde falha), decisões que exigiram
+  olhar a imagem, padrão x exceção e mudanças no rascunho por impacto. Um
+  primeiro lote com o pedido em texto corrido devolveu só um resumo
+  genérico; se ainda vier curto, pedir na mesma conversa que preencha o
+  modelo. "Importar lote" aceita o
   `correcoes.json`, uma lista de correções com `plan_id` ou vários `.json`
   (o `plan_id` vem de dentro ou do nome do arquivo); cada correção entra como
   rascunho na sua planta, que continua pendente, e um resumo lista planta a

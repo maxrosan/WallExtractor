@@ -494,12 +494,43 @@ próprio `LEIA-ME.md` (regras de anotação e formato), `planta.png`, `planta_nu
      (Python + Pillow/numpy), uma função por ferramenta, com um comentário curto dizendo que problema
      ela resolve. Sem coordenadas nem valores fixos de uma planta: parâmetros relativos (pixels da
      imagem ou espessura da parede), para servir em outras plantas.
-   - `relatorio_lote.md`: os problemas que você encontrou nos `planta.json` originais (paredes
-     picotadas, parede onde não existe, porta que era janela...), em quantas plantas e quantas vezes
-     cada um; para cada problema, se uma das ferramentas corrige sozinha e com quais parâmetros, ou
-     se precisou de avaliação visual; as decisões que você tomou olhando a imagem e que um script não
-     tomaria; o que se repetiu entre as plantas e o que foi exceção de uma só; e o que você mudaria
-     no rascunho automático para dar menos trabalho.
+   - `relatorio_lote.md`: copie o modelo abaixo e PREENCHA todas as tabelas, com números contados
+     nos `planta.json` originais comparados às suas correções (não descreva o método em geral).
+
+```markdown
+# Relatório do lote
+
+## 1. Problemas do rascunho (planta.json original)
+| Problema | Plantas onde aparece (plan_id) | Ocorrências no lote | Exemplo (plan_id, id original) |
+|---|---|---:|---|
+| Parede real picotada em vários trechos | | | |
+| Parede onde não existe (cota, projeção, piso, móvel, escada...) | | | |
+| Eixo da parede deslocado | | | |
+| Espessura errada | | | |
+| Parede passando por cima de um vão | | | |
+| Porta onde não existe | | | |
+| Janela onde não existe | | | |
+| Abertura faltando | | | |
+| Tipo trocado (porta x janela) | | | |
+| Largura/posição da abertura imprecisa | | | |
+| (outros que você encontrou) | | | |
+
+## 2. O que um script resolve
+| Problema | Resolve sozinho? (sim / em parte / não) | Função em ferramentas.py | Parâmetros (relativos) | Onde falha |
+|---|---|---|---|---|
+
+## 3. Decisões que exigiram olhar a imagem
+| plan_id | Decisão | Por quê (o que na imagem decidiu) |
+|---|---|---|
+
+## 4. Padrão x exceção
+- Repetiu em quase todas as plantas: ...
+- Apareceu em uma planta só: ...
+
+## 5. O que mudar no rascunho automático (em ordem de impacto)
+| # | Mudança | Problemas da seção 1 que resolve | Ganho estimado no lote |
+|---|---|---|---|
+```
 
 No editor, "Importar lote" aceita o `correcoes.json` ou os vários `<plan_id>.json` de uma vez; cada
 correção entra como rascunho na sua planta, para revisão.
@@ -511,7 +542,8 @@ me pedir confirmação entre elas, gravando correcoes/<plan_id>.json e anotando 
 me entregue correcoes.json com todas as correções (uma chave por plan_id). Se o tempo acabar antes, entregue o
 que já tiver; quando eu disser "continue", retome pela primeira planta sem arquivo em correcoes/.
 Só depois de terminar todas as plantas, entregue também ferramentas.py e relatorio_lote.md cobrindo o lote
-inteiro, como pede o passo 6 do LEIA-ME_LOTE.md (as correções vêm antes: se faltar tempo, deixe estes dois).
+inteiro, preenchendo o modelo de relatório do passo 6 do LEIA-ME_LOTE.md com números contados (as correções
+vêm antes: se faltar tempo, deixe estes dois).
 """
 
 AI_BATCH_MAX = 40
