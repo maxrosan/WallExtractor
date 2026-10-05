@@ -181,7 +181,8 @@ consomem o mesmo JSON.
 - Trabalho direto na `main` (a branch `claude/vector-false-doors` acompanha).
   O EasyPanel constrói da `main`; cada mudança no editor é publicada com
   redeploy. A branch `claude/jolly-brown-ij69cl` pode ser apagada.
-- Fila do editor: 50 plantas, todas corrigidas (4 de escritório, 29 vetoriais
+- Fila do editor: 18 plantas de Bauru pendentes (escaneadas, enfileiradas em
+  2026-10-05) e 50 corrigidas (4 de escritório, 29 vetoriais
   de SJC, 17 do portfólio raster de SJC, as do portfólio com ajuda de IA em
   lote). Cópia local antiga em `data/gt` (33 plantas).
 - Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas,
