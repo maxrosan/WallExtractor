@@ -526,8 +526,26 @@ def mascara_cor(rgb, cor):
             & (b >= cor["b"][0]) & (b <= cor["b"][1]))
 
 
+def faces_continuas(escuro, o, eixo, espessura, s, e, raio=2):
+    """Problema: em plantas com a parede PINTADA da cor do caixilho (ex.: cópias com paredes
+    preenchidas de azul), a cor sozinha acha 'janela' ao longo da parede inteira. Num vão de
+    verdade as duas faces da parede são interrompidas (param nos batentes e só o caixilho passa).
+    Devolve a fração de [s, e] em que as DUAS faces (eixo ± espessura/2) têm traço escuro."""
+    h, w = escuro.shape
+    lim = w if o == "h" else h
+    s, e = max(0, int(s)), min(lim - 1, int(e))
+    if e <= s:
+        return 0.0
+    presentes = []
+    for f in (eixo - espessura / 2, eixo + espessura / 2):
+        lo, hi = max(0, int(round(f)) - raio), min((h if o == "h" else w) - 1, int(round(f)) + raio)
+        faixa = escuro[lo:hi + 1, s:e + 1].any(axis=0) if o == "h" else escuro[s:e + 1, lo:hi + 1].any(axis=1)
+        presentes.append(faixa)
+    return float((presentes[0] & presentes[1]).mean())
+
+
 def medir_aberturas(rgb, paredes, t, cor_porta=COR_PORTA, cor_janela=COR_JANELA,
-                    faixa=0.7, folga=None, largura_min=1.5):
+                    faixa=0.7, folga=None, largura_min=1.5, faces_max=0.6):
     """Problema: achar portas e janelas e a largura exata do vão, e não confundir uma com a outra.
     Varre uma faixa de ±faixa*t em volta do eixo de cada parede, ao longo de toda a imagem,
     procurando pixels da cor de porta (marcos) e de janela (caixilho); guarda só os vãos que
@@ -535,9 +553,13 @@ def medir_aberturas(rgb, paredes, t, cor_porta=COR_PORTA, cor_janela=COR_JANELA,
     de `folga` (padrão 2.5*t) formam um vão; porta = do começo do primeiro marco ao fim do último
     (borda externa dos marcos = onde a linha da parede é interrompida); janela = extensão do
     caixilho. Vãos menores que largura_min*t são ignorados (etiquetas, folhas de porta soltas).
+    Uma janela em que as duas faces da parede continuam em mais de `faces_max` do comprimento é a
+    própria parede colorida, não abertura (`faces_continuas`); nas portas não se aplica, porque a
+    soleira é desenhada como duas linhas atravessando o vão.
     Devolve lista de openings no eixo da parede."""
     folga = 2.5 * t if folga is None else folga
     mp, mj = mascara_cor(rgb, cor_porta), mascara_cor(rgb, cor_janela)
+    escuro = mascara_escura(rgb.mean(axis=2), 128, rgb)
     h, w = mp.shape
     aberturas = []
     for p in paredes:
@@ -560,6 +582,9 @@ def medir_aberturas(rgb, paredes, t, cor_porta=COR_PORTA, cor_janela=COR_JANELA,
                 # o vão tem de encostar numa ponta da parede (ou sobrepô-la): o resto é de outra parede
                 if e < a - 1.5 * t or s > b + 1.5 * t:
                     continue
+                # windows only: a door's threshold is drawn as two lines across the opening, like faces
+                if tipo == "window" and faces_continuas(escuro, o, eixo, p["thickness"], s, e) > faces_max:
+                    continue  # the wall runs on through the coloured stretch: painted wall, not a window
                 st = [s, eixo] if o == "h" else [eixo, s]
                 en = [e, eixo] if o == "h" else [eixo, e]
                 aberturas.append({"type": tipo, "start": st, "end": en, "wall_id": p["id"]})

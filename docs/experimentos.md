@@ -646,3 +646,13 @@ das plantas brasileiras faz o Qwen decorar.
   traço colorido de cópia heliográfica, que a máscara descarta de
   propósito) e nas outras acha 0 a 26 trechos. Não foi adaptado (heurística
   por estilo); passou a recusar com explicação em vez de erro de Python.
+- Paredes pintadas da cor do caixilho (Bauru: Vitória Régia e Nova Bauru,
+  paredes preenchidas de azul): `medir_aberturas` via "janela" ao longo da
+  parede inteira e `cortar_nos_vaos` trocava as paredes por janelas.
+  Correção: uma janela só vale se as duas faces da parede forem
+  interrompidas em pelo menos 40% do trecho (`faces_continuas`). Nas portas
+  não se aplica: a soleira é desenhada como duas linhas no vão e, aplicada a
+  elas, a regra derrubava as portas do portfólio de 0,76 para 0,33. Portfólio
+  (17 plantas, F1 a 1,5%): portas 0,759 -> 0,759, janelas 0,706 -> 0,699.
+  Vitória Régia e Nova Bauru: 0 janelas falsas (antes 8 e 13); as paredes
+  externas pintadas de azul forte continuam de fora.
