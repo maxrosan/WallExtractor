@@ -33,7 +33,10 @@ página estática) e `Dockerfile` na raiz.
   vãos). Menos de 1 s por planta. Entra como uma importação: salva como
   rascunho, mostra os avisos e Ctrl+Z volta. Feito para plantas coloridas
   de BIM, como o portfólio de SJC; em desenhos de outro estilo pode perder
-  paredes (medição em `docs/experimentos.md`).
+  paredes (medição em `docs/experimentos.md`). Quando a planta não tem
+  paredes como duas linhas paralelas (paredes preenchidas, cópias coloridas
+  ou desbotadas, como a maioria das de Bauru) ou o resultado tem menos de 4
+  paredes, o servidor recusa com essa explicação e a tela não muda.
 - **Ajuda da IA (Claude, ChatGPT…).** "Pedir ajuda à IA" (painel da direita)
   salva a planta e baixa `ia_<título>.zip` (`GET /api/plans/{id}/ai`) com
   `planta.png` (render base), `planta_numerada.png` (anotação atual por cima,

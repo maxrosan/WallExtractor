@@ -856,12 +856,20 @@ def estatisticas_rascunho(original, correcao):
 # --------------------------------------------------------------------------------------------
 
 
+class DesenhoNaoSuportado(ValueError):
+    """The drawing has no walls as pairs of parallel lines, so this detector does not apply."""
+
+
 def pipeline_automatico(png, t=None, limiar=128, plan_id=None):
     """Encadeia tudo: espessura -> paredes por pares de faces -> mescla/filtra -> aberturas por cor
     -> corta nos vãos -> liga cantos -> divide nos encontros (L/T/cruz). É um rascunho melhor, não dispensa a revisão visual."""
     rgb, gray = carregar(png)
     mask = mascara_escura(gray, limiar, rgb)
     t_est, hist = estimar_espessura(mask)
+    if t is None and t_est is None:
+        raise DesenhoNaoSuportado(
+            "não há paredes desenhadas como duas linhas paralelas nesta planta (paredes preenchidas, "
+            "cópia colorida ou desbotada); o detector de faces não se aplica a este estilo, use o rascunho da máquina")
     ts = espessuras_candidatas(hist, t_est) if t is None else [t]
     t = ts[0]
     paredes = detectar_paredes(mask, ts)

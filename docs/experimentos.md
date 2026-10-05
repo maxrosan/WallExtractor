@@ -640,3 +640,9 @@ CubiCasa (30): paredes 0,30 / 0,85, portas 0,56, janelas 0,22.
 Lições: comparar modelos só em plantas que nenhum viu (fixar a validação ao
 crescer o conjunto, ou guardar um conjunto de teste à parte); repetição alta
 das plantas brasileiras faz o Qwen decorar.
+
+- Detector de faces nas 18 plantas de Bauru (escaneadas): falha em 10 (não
+  acha nenhum par de faces: paredes preenchidas, como nas Redentor, ou
+  traço colorido de cópia heliográfica, que a máscara descarta de
+  propósito) e nas outras acha 0 a 26 trechos. Não foi adaptado (heurística
+  por estilo); passou a recusar com explicação em vez de erro de Python.

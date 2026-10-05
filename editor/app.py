@@ -607,14 +607,21 @@ def faces_draft(pid: str) -> dict:
     """A new draft from the base render with the face-pair detector (wallextractor.faces): walls as pairs of
     parallel lines, doors and windows by the drawing's colours. Not saved: the page loads it like an
     imported answer, so the reviewer can undo it."""
-    from wallextractor.faces import pipeline_automatico
+    from wallextractor.faces import DesenhoNaoSuportado, pipeline_automatico
 
     if store.get(pid) is None or not os.path.isfile(store.render_path(pid)):
         raise HTTPException(404)
     try:
-        return pipeline_automatico(store.render_path(pid), plan_id=pid)
+        draft = pipeline_automatico(store.render_path(pid), plan_id=pid)
+        if len(draft["walls"]) < 4:  # replacing the screen with an (almost) empty draft would only lose work
+            raise DesenhoNaoSuportado(
+                f"o detector de faces só achou {len(draft['walls'])} parede(s) nesta planta; o estilo do desenho "
+                "não serve para ele, use o rascunho da máquina")
+        return draft
+    except DesenhoNaoSuportado as exc:
+        raise HTTPException(422, str(exc))
     except Exception as exc:  # noqa: BLE001 - a drawing the detector cannot read is reported, not a 500
-        raise HTTPException(422, f"o detector de faces não conseguiu ler esta planta: {exc}")
+        raise HTTPException(422, f"o detector de faces não conseguiu ler esta planta ({type(exc).__name__}: {exc})")
 
 
 @app.post("/api/ai/batch", dependencies=[Depends(auth)])
