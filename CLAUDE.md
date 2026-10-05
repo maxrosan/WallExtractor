@@ -190,23 +190,22 @@ consomem o mesmo JSON.
   das correções em 2026-10-03 (backup em `data/backup_before_rm/`).
 - Direção: o caminho principal é o modelo treinado nas correções (SegFormer
   E5 e depois o Qwen-VL), não refinar heurísticas por estilo de desenho.
-- Raster E5 (2026-10-03, publicado no editor): IoU nas 7 brasileiras de
-  validação parede 0,894 / porta 0,673 / janela 0,724 (E4: 0,837 / 0,522 /
-  0,714). Modelo em `/root/we/results_e5/best.onnx`.
-- Q1 (Qwen3-VL-4B LoRA, 33 plantas): F1 a 1,5% nas 7 BR de validação
-  paredes 0,32 (pontas) / 0,77 (comprimento), portas 0,34, janelas 0,27;
-  a 5%: 0,68 / 0,95, portas 0,80, janelas 0,70 (`docs/experimentos.md`).
-- E6/Q2 rodando no Pichau desde 2026-10-05 00:19 UTC (`run_e6_q2.sh`, log
-  `run_e6_q2.log`; a tentativa interrompida está em `results_e6_parcial_*` e
-  `run_e6_q2_parado.log`): 50 correções (40 treino, 10 validação), E6 =
-  receita do E5 com 80 épocas, E5 x E6 na validação nova, dados do Qwen
-  (repetição 10), Q1 na validação nova, Q2 com 2 épocas. Dados das 33
-  plantas guardados em `prepared_corr_33` e `vlm_33`.
+- Raster E6 (2026-10-05, publicado no editor): IoU nas 10 de validação
+  (50 plantas) parede 0,837 / porta 0,746 / janela 0,824 (E5: 0,739 / 0,612
+  / 0,694). Modelo em `/root/we/results_e6/best.onnx`.
+- Qwen: o Q1 decorou as plantas do treino (1,00 nas que viu). Nas 6 de
+  validação que nenhum viu, F1 a 1,5%: Q2 paredes 0,18 (pontas) / 0,73
+  (comprimento), portas 0,18, janelas 0,41; Q1 0,11 / 0,69 / 0,27 / 0,29.
+  Adaptadores em `/root/we/results_vlm/run1` (Q1) e `run2` (Q2).
+- Divisões de dados no Pichau: `prepared_corr_33`/`vlm_33` (33 plantas, E5 e
+  Q1) e `prepared_corr`/`vlm` (50 plantas, E6 e Q2).
 
 ## Próximos passos
 
-1. Quando `run_e6_q2.sh` terminar: comparar E6 com E5 e Q2 com Q1 na
-   validação nova (10 plantas), registrar em `docs/experimentos.md` e, se o
-   E6 for melhor, publicar no editor (`PUT /api/model`).
-2. Ramo raster no editor: recortar a região da planta antes de segmentar
+1. Fixar um conjunto de teste de plantas que nenhum modelo vê (ex.: as 10 de
+   validação atuais) e só acrescentar plantas novas ao treino, para as
+   comparações não se contaminarem.
+2. Qwen: mais plantas de estilos variados antes de treinar de novo; repetição
+   menor; considerar o 8B com QLoRA se os dados crescerem.
+3. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.

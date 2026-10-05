@@ -602,3 +602,41 @@ também os scripts e um relatório (`data/ferr`, fora do git).
   20-25; comprimento 0,79-0,92 contra 0,84-0,95) e as aberturas variam
   (portas 0,25-1,00, janelas 0-0,80). Confirma que ele é um acelerador para
   o estilo em que foi escrito, não um rascunho geral.
+
+## E6 e Q2: 50 plantas corrigidas (2026-10-05)
+
+50 correções (4 escritório, 29 vetoriais de SJC, 17 do portfólio raster),
+divididas em 40 de treino e 10 de validação (`annotations`, semente 0). A
+divisão mudou em relação às 33 plantas: das 10 de validação, 4 estavam no
+treino do E5/Q1, 1 na validação deles e 5 são novas (portfólio).
+
+**E6** (receita do E5, 80 épocas, 2 h 03 min; melhor época 72). IoU nas 10
+de validação:
+
+| | parede | porta | janela | mIoU |
+|---|---|---|---|---|
+| E5 (viu 4 das 10 no treino) | 0,739 | 0,612 | 0,694 | 0,682 |
+| E6 | 0,837 | 0,746 | 0,824 | 0,802 |
+
+O E6 ganha mesmo com a vantagem do E5. Publicado no editor (`PUT /api/model`,
+sha256 `0982eafb…`).
+
+**Q2** (Q1 com as 50 plantas, repetição 10 em vez de 20, 2 épocas, 3 h 13 min;
+perda de validação 0,593 -> 0,578). Na validação inteira o Q1 parecia melhor
+(paredes a 1,5% 0,52 contra 0,24), mas o Q1 tirou 1,00 em tudo nas 4 plantas
+que viu no treino: decorou (cada planta vista 40 vezes). Separando, F1 a 1,5%:
+
+| | plantas | paredes (pontas) | paredes (comprimento) | portas | janelas |
+|---|---|---|---|---|---|
+| Q1 | 4 vistas no treino do Q1 | 1,00 | 1,00 | 1,00 | 1,00 |
+| Q2 | as mesmas 4 (nunca vistas) | 0,33 | 0,73 | 0,55 | 0,20 |
+| Q1 | 6 nunca vistas por nenhum | 0,11 | 0,69 | 0,27 | 0,29 |
+| Q2 | as mesmas 6 | 0,18 | 0,73 | 0,18 | 0,41 |
+
+Nas plantas novas o Q2 melhora paredes e janelas e piora portas; amostra de
+6, quase todas do portfólio, estilo que os dois acham difícil. Q2 no
+CubiCasa (30): paredes 0,30 / 0,85, portas 0,56, janelas 0,22.
+
+Lições: comparar modelos só em plantas que nenhum viu (fixar a validação ao
+crescer o conjunto, ou guardar um conjunto de teste à parte); repetição alta
+das plantas brasileiras faz o Qwen decorar.
