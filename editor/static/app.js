@@ -656,11 +656,19 @@ function linkOpening(plan, o) {
   const w = best.w; o.wall_id = w.id; o.start = atT(w, proj(w, o.start)); o.end = atT(w, proj(w, o.end)); o.width = dist(o.start, o.end);
 }
 // Checks on an imported answer, as warnings only (the reviewer decides).
+// Signed deviation (degrees) of a segment from the nearest of horizontal/vertical, in (-45, 45].
+function skewOf(x) { const a = Math.atan2(x.end[1] - x.start[1], x.end[0] - x.start[0]) * 180 / Math.PI; return ((a % 90) + 135) % 90 - 45; }
 function planWarnings(plan) {
   const out = [], W = plan.image.width, H = plan.image.height, t = planMedianT(plan);
   const off = p => p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H;
-  const tilt = x => { const dx = Math.abs(x.end[0] - x.start[0]), dy = Math.abs(x.end[1] - x.start[1]);
-    const a = Math.atan2(Math.min(dx, dy), Math.max(dx, dy)) * 180 / Math.PI; return a > 0.5 && a < 10 ? a : 0; };
+  // Tilts under 1° are scanning drift. When many walls are tilted, the image itself is askew or in
+  // perspective (photo of a sheet): one notice with the range replaces a warning per wall. Only a few
+  // tilted walls among straight ones are suspicious and listed one by one.
+  const tilted = [...plan.walls, ...plan.openings].filter(x => Math.abs(skewOf(x)) >= 1 && Math.abs(skewOf(x)) < 10);
+  const nWallsTilted = plan.walls.filter(x => Math.abs(skewOf(x)) >= 1).length;
+  const askew = plan.walls.length >= 4 && nWallsTilted >= 0.4 * plan.walls.length;
+  if (askew) { const ang = tilted.map(x => Math.abs(skewOf(x))); out.push(`imagem inclinada ou em perspectiva: ${tilted.length} paredes/aberturas entre ${Math.min(...ang).toFixed(1)}° e ${Math.max(...ang).toFixed(1)}° (normal em foto ou escaneamento torto; confira só se algo destoar)`); }
+  const tilt = x => { const a = Math.abs(skewOf(x)); return !askew && a >= 1 && a < 10 ? a : 0; };
   for (const w of plan.walls) {
     if (off(w.start) || off(w.end)) out.push(`parede ${w.id} fora da imagem`);
     const a = tilt(w); if (a) out.push(`parede ${w.id} torta (${a.toFixed(1)}°)`);

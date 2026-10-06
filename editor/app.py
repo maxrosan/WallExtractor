@@ -309,6 +309,8 @@ que não existem, aberturas faltando ou com o tipo errado.
 - Portas: folha (linha) com o arco de abertura, ou porta de correr. Janelas: caixilho (linhas finas
   dentro da espessura da parede). Etiquetas ajudam: P1, P2… são portas; J1, J2… são janelas. Uma
   etiqueta repetida (duas P2) indica tipos iguais em lugares diferentes: cada uma é uma abertura.
+- Passagem sem porta (vão livre, "VÃO 80x2,10", arco sem folha): deixe a parede interrompida no vão,
+  sem abertura; o formato só tem porta e janela.
 
 ## Formato de `planta.json` e da resposta
 

@@ -60,8 +60,11 @@ página estática) e `Dockerfile` na raiz.
   paredes e aberturas da tela (escala, quadro e origem ficam), salva como
   rascunho e não muda o status; Ctrl+Z volta à anotação anterior. Depois
   da importação o painel lista avisos para conferir (parede sobre um vão,
-  abertura sem parede na sua linha, segmento levemente torto, ponto fora da
-  imagem, parede curta demais); são só alertas, nada é bloqueado.
+  abertura sem parede na sua linha, segmento torto, ponto fora da imagem,
+  parede curta demais); são só alertas, nada é bloqueado. Inclinação abaixo
+  de 1° é deriva de escaneamento e não gera aviso; quando 40% ou mais das
+  paredes estão inclinadas (foto ou escaneamento torto, perspectiva), vira um
+  aviso só com a faixa de ângulos, e só inclinações isoladas são listadas.
 - **Lotes para a IA.** Na fila, cada planta tem uma caixa de marcar ("todas"
   marca a lista do filtro). "Baixar lote para IA" (`POST /api/ai/batch`
   `{"ids": [...]}`, até 40 plantas) baixa um zip com uma pasta
