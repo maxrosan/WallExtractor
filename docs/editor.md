@@ -87,16 +87,22 @@ página estática) e `Dockerfile` na raiz.
   planta o que entrou, as notas da IA e os avisos. Chave e `plan_id`
   divergentes, planta repetida no lote e planta que não está no editor
   aparecem como erro, sem importar.
-- **Claude no computador.** "Corrigir com Claude" (no painel da planta) e
-  "Corrigir com Claude (N)" (plantas marcadas na fila) põem as plantas numa
-  fila no servidor (`ai_jobs` no SQLite). O editor não alcança o computador
+- **IA no computador (Claude ou ChatGPT).** "Corrigir com Claude" e
+  "Corrigir com ChatGPT" (no painel da planta) e as versões com (N) para as
+  plantas marcadas na fila põem as plantas numa fila no servidor (`ai_jobs`
+  no SQLite, com `engine` = `claude` ou `codex`). O editor não alcança o computador
   do usuário; quem trabalha é `scripts/claude_worker.py`, rodando no Lenovo:
   pede a próxima planta (`POST /api/ai/jobs/claim`), baixa o mesmo pacote do
   "Pedir ajuda à IA", grava ao lado um `verificar.py` (erro para parede
   passando por cima de vão, parede minúscula fora de batente, abertura sem
   parede alinhada, ponto fora da imagem; aviso para segmento torto e
   espessura fora do padrão) e roda `claude -p` na pasta, só com leitura,
-  escrita na pasta e `python`, sem web. O Claude deve rodar o `verificar.py`
+  escrita na pasta e `python`, sem web; o ChatGPT roda pelo Codex CLI
+  (`codex exec --sandbox workspace-write`, o pedido pela entrada padrão e as
+  duas imagens inteiras anexadas). O worker usa a CLI que vem com o app do
+  Codex (`%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`) quando existe,
+  porque a do npm global pode estar velha demais para o modelo da conta
+  (erro "requires a newer version of Codex"). O Claude deve rodar o `verificar.py`
   até não sobrar erro. O worker confere de novo e devolve o `correcao.json`
   com um resumo (paredes, aberturas, minutos, passos, custo estimado, erros
   que sobraram, o resumo do Claude). Durante o trabalho, a cada 20 s, o
@@ -114,12 +120,13 @@ página estática) e `Dockerfile` na raiz.
 
   ```
   python scripts/claude_worker.py              # fica pedindo trabalho até Ctrl+C
+  python scripts/claude_worker.py --engines claude,codex   # Claude e ChatGPT
   python scripts/claude_worker.py --once       # uma planta e sai
   python scripts/claude_worker.py --model sonnet --timeout-min 30
   ```
 
-  Cada job guarda a pasta (pacote, `correcao.json`, `claude.jsonl` com a
-  sessão inteira) em `~/.wallextractor/claude_jobs/`, fora do repositório,
+  Cada job guarda a pasta (pacote, `correcao.json`, `claude.jsonl` ou
+  `codex.jsonl` com a sessão inteira) em `~/.wallextractor/claude_jobs/`, fora do repositório,
   para a sessão não carregar o `CLAUDE.md` do projeto.
 - **Exportação para treino.** `GET /api/export?status=corrected` devolve um
   zip com `<id>.png` (lado maior 1024 px) e `<id>.json` (WallPlan nas
@@ -292,9 +299,9 @@ esse passo entrar: a imagem é o input e o JSON é o alvo.
 | `GET /api/export?status=corrected` | zip de pares de treino |
 | `GET /api/model` | modelo raster em uso: presença, tamanho, sha256 |
 | `PUT /api/model` (multipart `file`) | troca o modelo raster (ONNX); validado antes de substituir o atual |
-| `POST /api/ai/jobs` `{"ids": [...]}` | põe plantas na fila do Claude no computador |
+| `POST /api/ai/jobs` `{"ids": [...], "engine": "claude" \| "codex"}` | põe plantas na fila da IA no computador |
 | `GET /api/ai/jobs` | jobs (o mais novo primeiro) e computadores vistos (`seen_s`) |
-| `POST /api/ai/jobs/claim` `{"worker": nome}` | o worker pega o job mais antigo da fila |
+| `POST /api/ai/jobs/claim` `{"worker": nome, "engines": [...]}` | o worker pega o job mais antigo das filas que atende |
 | `POST /api/ai/jobs/{id}` `{"message"}` / `{"status": "done", "result"}` / `{"status": "error" \| "cancelled"}` / `{"applied": true}` | progresso, fim, cancelamento, correção carregada |
 
 Todas as rotas `/api` exigem o header `X-Token` (ou `?token=`) quando

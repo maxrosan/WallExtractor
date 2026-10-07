@@ -29,9 +29,10 @@ editor (`scripts/eval_openings.py`).
   ou o ChatGPT; quando o usuário trouxer esse zip, siga o LEIA-ME e devolva
   `correcao.json` (pixels de `planta.png`, paredes interrompidas nos vãos,
   aberturas no vão), conferido com `conferir.py`.
-  "Corrigir com Claude" põe plantas numa fila no servidor; `scripts/claude_worker.py`
-  no Lenovo (com `EDITOR_TOKEN` no ambiente) pega cada uma, roda `claude -p` no mesmo
-  pacote com um `verificar.py` e devolve a correção, que entra como rascunho quando a
+  "Corrigir com Claude" / "com ChatGPT" põe plantas numa fila no servidor;
+  `scripts/claude_worker.py --engines claude,codex` no Lenovo (com `EDITOR_TOKEN` no
+  ambiente) pega cada uma, roda `claude -p` ou `codex exec` no mesmo pacote com um
+  `verificar.py` e devolve a correção, que entra como rascunho quando a
   planta é aberta (ver `docs/editor.md`).
 - `wallextractor/vlm_data.py`, `train_vlm.py`, `eval_vlm.py`: fine-tuning do
   Qwen3-VL (LoRA só no modelo de linguagem, visão congelada). Alvo compacto

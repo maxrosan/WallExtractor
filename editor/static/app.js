@@ -730,6 +730,7 @@ $("#paste-ok").addEventListener("click", () => {
 function pickedUpdate() {
   const n = S.picked.size; $("#batch-get").textContent = `Baixar lote para IA (${n})`; $("#batch-get").disabled = !n;
   $("#claude-batch").textContent = `Corrigir com Claude (${n})`; $("#claude-batch").disabled = !n;
+  $("#codex-batch").textContent = `Corrigir com ChatGPT (${n})`; $("#codex-batch").disabled = !n;
   const boxes = $$("#queue input.pick"); $("#pick-all").checked = boxes.length > 0 && boxes.every(b => b.checked);
 }
 $("#pick-all").addEventListener("change", e => { for (const b of $$("#queue input.pick")) { b.checked = e.target.checked;
@@ -789,15 +790,17 @@ $("#batch-put").addEventListener("change", async e => {
 });
 $("#batch-close").addEventListener("click", () => { $("#batch-modal").hidden = true; });
 
-// ------------------------------------------------------------------ Claude Code on the user's computer
+// ------------------------------------------------------------------ AI agents on the user's computer
 // The plans go to a queue on the server; scripts/claude_worker.py (on the user's computer) takes them one by one,
-// runs `claude -p` on the AI package and posts the correction back. A finished correction is loaded into the plan
+// runs `claude -p` (Claude) or `codex exec` (ChatGPT) on the AI package and posts the correction back. A finished correction is loaded into the plan
 // as soon as it is open here (as an import: warnings shown, Ctrl+Z undoes), and stays a draft until reviewed.
 S.jobs = {}; S.workers = []; S.jobTimer = null; S.queuePos = [];
-const JOB_TXT = { queued: "na fila do Claude", running: "Claude corrigindo", done: "Claude terminou", error: "Claude falhou", cancelled: "Claude cancelado" };
+const ENGINE = { claude: "Claude", codex: "ChatGPT" };
+const eng = j => ENGINE[j.engine] || "Claude";
 function jobBadge(pid) {
   const j = S.jobs[pid]; if (!j || j.status === "cancelled") return "";
-  const t = j.status === "done" ? (j.applied ? "Claude ✓" : "Claude: pronta") : JOB_TXT[j.status];
+  const t = { queued: `na fila do ${eng(j)}`, running: `${eng(j)} corrigindo`, error: `${eng(j)} falhou`,
+    done: j.applied ? `${eng(j)} ✓` : `${eng(j)}: pronta` }[j.status];
   return ` <span class="st job ${j.status}" title="${esc(j.message || "")}">${esc(t)}</span>`;
 }
 function ago(t) { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`; }
@@ -821,39 +824,42 @@ async function loadJobs() {
 function claudePanel() {
   const j = S.pid && S.jobs[S.pid]; const el = $("#claude-status");
   const active = !!(j && (j.status === "queued" || j.status === "running"));
-  $("#claude-cancel").hidden = !active; $("#claude-reapply").hidden = !(j && j.status === "done"); $("#claude-one").disabled = !S.pid || active;
+  $("#claude-cancel").hidden = !active; $("#claude-reapply").hidden = !(j && j.status === "done");
+  $("#claude-one").disabled = $("#codex-one").disabled = !S.pid || active;
   const live = S.workers.filter(w => w.seen_s < 90);
-  $("#claude-worker").innerHTML = live.length ? `Computador conectado: ${live.map(w => esc(w.name)).join(", ")}.`
-    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py</span> (ver docs/editor.md).`;
+  $("#claude-worker").innerHTML = live.length ? `Computador conectado: ${live.map(w => `${esc(w.name)} (${(w.engines || ["claude"]).map(e => ENGINE[e] || e).join(" e ")})`).join(", ")}.`
+    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py --engines claude,codex</span> (ver docs/editor.md).`;
   if (j && j.status === "done" && el.dataset.job === String(j.id)) return;  // keeps the import warnings on screen
   el.className = "small muted"; delete el.dataset.job;
   if (!S.pid) el.textContent = "Abra uma planta da fila.";
-  else if (!j) el.textContent = "O Claude Code do seu computador corrige a planta sozinho e devolve um rascunho para você revisar.";
+  else if (!j) el.textContent = "O Claude Code ou o ChatGPT (Codex) do seu computador corrige a planta sozinho e devolve um rascunho para você revisar.";
   else if (j.status === "queued") { const k = S.queuePos.indexOf(S.pid) + 1; el.textContent = `Na fila${k ? ` (posição ${k})` : ""}, há ${ago(j.created)}.`; }
-  else if (j.status === "running") el.textContent = `Claude corrigindo (${j.worker || "?"}): ${j.message || "…"} · última notícia há ${ago(j.updated)}.`;
-  else if (j.status === "done") el.textContent = `Claude terminou há ${ago(j.updated)}${j.applied ? "; a correção já foi carregada nesta planta" : ""}. ${j.message || ""}`;
-  else if (j.status === "error") { el.textContent = "Claude falhou: " + (j.message || "sem detalhe") + ". Pode pedir de novo."; el.className = "small err"; }
+  else if (j.status === "running") el.textContent = `${eng(j)} corrigindo (${j.worker || "?"}): ${j.message || "…"} · última notícia há ${ago(j.updated)}.`;
+  else if (j.status === "done") el.textContent = `${eng(j)} terminou há ${ago(j.updated)}${j.applied ? "; a correção já foi carregada nesta planta" : ""}. ${j.message || ""}`;
+  else if (j.status === "error") { el.textContent = `${eng(j)} falhou: ` + (j.message || "sem detalhe") + ". Pode pedir de novo."; el.className = "small err"; }
   else el.textContent = "Cancelado. Pode pedir de novo.";
 }
 async function claudeAutoApply(job) {
   if (!job || job.status !== "done" || job.applied || !job.result || job.pid !== S.pid) return;
-  const el = $("#claude-status"); importOpen(job.result, "do Claude", "#claude-status"); el.dataset.job = String(job.id);
+  const el = $("#claude-status"); importOpen(job.result, `do ${eng(job)}`, "#claude-status"); el.dataset.job = String(job.id);
   if (job.message) el.insertAdjacentHTML("beforeend", `<br><span class="muted">Do computador: ${esc(job.message)}</span>`);
   try { S.jobs[job.pid] = await api(`/ai/jobs/${job.id}`, { method: "POST", json: { applied: true } }); } catch (e) { /* loaded again next time */ }
 }
-async function claudeQueue(ids) { const d = await api("/ai/jobs", { method: "POST", json: { ids } }); await loadJobs(); return d; }
-$("#claude-one").addEventListener("click", async () => {
-  if (!S.pid) return; if (S.dirty) await save();
-  try { const d = await claudeQueue([S.pid]); if (!d.added.length) $("#claude-status").textContent = d.skipped.map(x => x.why).join("; "); }
-  catch (err) { $("#claude-status").textContent = "Não enfileirado: " + err.message; $("#claude-status").className = "small err"; }
-});
-$("#claude-batch").addEventListener("click", async () => {
-  const ids = [...S.picked]; if (!ids.length) return; if (S.dirty) await save();
-  try {
-    const d = await claudeQueue(ids);
-    $("#batch-status").textContent = `${d.added.length} planta(s) na fila do Claude` + (d.skipped.length ? `; ${d.skipped.length} já estava(m) na fila ou não existe(m)` : "") + ".";
-  } catch (err) { $("#batch-status").textContent = "Não enfileirado: " + err.message; }
-});
+async function claudeQueue(ids, engine) { const d = await api("/ai/jobs", { method: "POST", json: { ids, engine } }); await loadJobs(); return d; }
+for (const engine of ["claude", "codex"]) {
+  $(`#${engine}-one`).addEventListener("click", async () => {
+    if (!S.pid) return; if (S.dirty) await save();
+    try { const d = await claudeQueue([S.pid], engine); if (!d.added.length) $("#claude-status").textContent = d.skipped.map(x => x.why).join("; "); }
+    catch (err) { $("#claude-status").textContent = "Não enfileirado: " + err.message; $("#claude-status").className = "small err"; }
+  });
+  $(`#${engine}-batch`).addEventListener("click", async () => {
+    const ids = [...S.picked]; if (!ids.length) return; if (S.dirty) await save();
+    try {
+      const d = await claudeQueue(ids, engine);
+      $("#batch-status").textContent = `${d.added.length} planta(s) na fila do ${ENGINE[engine]}` + (d.skipped.length ? `; ${d.skipped.length} já estava(m) na fila ou não existe(m)` : "") + ".";
+    } catch (err) { $("#batch-status").textContent = "Não enfileirado: " + err.message; }
+  });
+}
 $("#claude-cancel").addEventListener("click", async () => {
   const j = S.pid && S.jobs[S.pid]; if (!j) return;
   try { await api(`/ai/jobs/${j.id}`, { method: "POST", json: { status: "cancelled", message: "cancelado no editor" } }); } catch (e) { /* refreshed below */ }
@@ -861,7 +867,7 @@ $("#claude-cancel").addEventListener("click", async () => {
 });
 $("#claude-reapply").addEventListener("click", async () => {
   const job = (await api(`/plans/${S.pid}`)).ai_job;
-  if (job && job.result) { importOpen(job.result, "do Claude", "#claude-status"); $("#claude-status").dataset.job = String(job.id); }
+  if (job && job.result) { importOpen(job.result, `do ${eng(job)}`, "#claude-status"); $("#claude-status").dataset.job = String(job.id); }
 });
 
 $("#mark-corrected").addEventListener("click", () => markStatus("corrected"));

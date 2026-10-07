@@ -1,17 +1,19 @@
-"""Corrects plans from the editor's queue with Claude Code on this computer.
+"""Corrects plans from the editor's queue with Claude Code or ChatGPT (Codex CLI) on this computer.
 
 The editor cannot reach this computer, so this script goes to the editor: it asks for the next plan in the
-"Corrigir com Claude" queue, downloads the same package as "Pedir ajuda à IA", runs `claude -p` on it in a
-folder of its own, checks the answer (verificar.py, written next to the package) and posts the correction
-back. The editor loads it into the plan as a draft when the reviewer opens it; nothing is marked corrected.
+"Corrigir com Claude" / "Corrigir com ChatGPT" queue, downloads the same package as "Pedir ajuda à IA", runs
+`claude -p` or `codex exec` on it in a folder of its own, checks the answer (verificar.py, written next to the
+package) and posts the correction back. The editor loads it into the plan as a draft when the reviewer opens
+it; nothing is marked corrected.
 
     set EDITOR_TOKEN=...            (the editor password; never passed on the command line)
-    python scripts/claude_worker.py                  # keeps asking for work until Ctrl+C
-    python scripts/claude_worker.py --once           # one plan, then exits
-    python scripts/claude_worker.py --model sonnet   # passed to claude --model
+    python scripts/claude_worker.py                          # Claude jobs, until Ctrl+C
+    python scripts/claude_worker.py --engines claude,codex   # Claude and ChatGPT jobs
+    python scripts/claude_worker.py --once                   # one plan, then exits
+    python scripts/claude_worker.py --model sonnet           # passed to claude --model (--codex-model for codex)
 
-Each job keeps its folder (package, correcao.json, claude.jsonl with the whole session) under --workdir,
-outside the repository so the session does not pick up the project's CLAUDE.md.
+Each job keeps its folder (package, correcao.json, <engine>.jsonl with the whole session) under --workdir,
+outside the repository so the session does not pick up the project's CLAUDE.md / AGENTS.md.
 """
 
 from __future__ import annotations
@@ -189,6 +191,30 @@ def describe(event: dict) -> str | None:
     return None
 
 
+def describe_codex(event: dict) -> str | None:
+    """The same for `codex exec --json` events."""
+    if event.get("type") != "item.started":
+        return None
+    it = event.get("item", {})
+    kind = it.get("type")
+    if kind == "command_execution":
+        c = str(it.get("command", ""))
+        m = re.search(r"-Command\s+(.*)", c, re.S)  # Windows: the command comes wrapped in pwsh.exe -Command '...'
+        return "rodando " + " ".join((m.group(1).strip("'\"") if m else c).split())[:70]
+    if kind == "file_change":
+        return "escrevendo " + ", ".join(Path(c.get("path", "")).name for c in it.get("changes", []))[:70]
+    if kind in ("reasoning", "agent_message", None):
+        return None
+    return kind.replace("_", " ")
+
+
+def find_codex() -> str:
+    """The Codex desktop app ships a newer CLI than an old global npm install; prefer the newest of the two."""
+    base = Path(os.environ.get("LOCALAPPDATA", "")) / "OpenAI" / "Codex" / "bin"
+    app = sorted(base.glob("*/codex.exe"), key=lambda p: p.stat().st_mtime) if base.is_dir() else []
+    return str(app[-1]) if app else (shutil.which("codex") or "codex")
+
+
 def find_json(text: str):
     """correcao.json missing: the JSON in the last message, if any."""
     for m in reversed(list(re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", text or "", re.S))):
@@ -208,31 +234,51 @@ def run_job(ed: Editor, job: dict, args) -> None:
     zipfile.ZipFile(io.BytesIO(ed.call(f"/plans/{pid}/ai", raw=True, timeout=300))).extractall(folder)
     (folder / "verificar.py").write_text(VERIFY, encoding="utf-8")
 
-    cmd = [args.claude, "-p", PROMPT.format(pid=pid), "--output-format", "stream-json", "--verbose",
-           "--permission-mode", "acceptEdits",
-           "--allowedTools", "Read", "Write", "Edit", "Glob", "Grep", "Bash(python *)", "Bash(python3 *)", "Bash(ls *)",
-           "--disallowedTools", "WebFetch", "WebSearch", "Agent", "Task"]
-    if args.model:
-        cmd += ["--model", args.model]
+    engine = job.get("engine") or "claude"
+    if engine == "codex":
+        # workspace-write: it writes only in the job folder; no network for its commands. The two whole images
+        # go with the prompt; the zoomed tiles it opens itself.
+        # the prompt goes through stdin: -i takes every argument after it as an image
+        cmd = [args.codex, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C", str(folder),
+               "-o", str(folder / "ultima_mensagem.txt")]
+        if args.codex_model:
+            cmd += ["-m", args.codex_model]
+        cmd += ["-i", str(folder / "planta.png"), str(folder / "planta_numerada.png")]
+    else:
+        cmd = [args.claude, "-p", PROMPT.format(pid=pid), "--output-format", "stream-json", "--verbose",
+               "--permission-mode", "acceptEdits",
+               "--allowedTools", "Read", "Write", "Edit", "Glob", "Grep", "Bash(python *)", "Bash(python3 *)", "Bash(ls *)",
+               "--disallowedTools", "WebFetch", "WebSearch", "Agent", "Task"]
+        if args.model:
+            cmd += ["--model", args.model]
     env = {k: v for k, v in os.environ.items() if k != "EDITOR_TOKEN"}  # the session never sees the password
     env["PYTHONUTF8"] = "1"  # Windows: the session's Python scripts print accents without cp1252 errors
-    proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+    proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.PIPE if engine == "codex" else subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace", env=env)
-    state = {"last": "começando", "steps": 0, "result": None, "stop": None}
+    if engine == "codex":
+        proc.stdin.write(PROMPT.format(pid=pid))
+        proc.stdin.close()
+    state = {"last": "começando", "steps": 0, "result": None, "stop": None, "usage": {}, "fail": None}
 
     def reader():
-        with open(folder / "claude.jsonl", "w", encoding="utf-8") as out:
+        with open(folder / f"{engine}.jsonl", "w", encoding="utf-8") as out:
             for line in proc.stdout:
                 out.write(line)
                 try:
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                d = describe(ev)
+                d = describe_codex(ev) if engine == "codex" else describe(ev)
                 if d:
                     state["last"], state["steps"] = d, state["steps"] + 1
                 if ev.get("type") == "result":
                     state["result"] = ev
+                elif ev.get("type") == "turn.completed":
+                    for k, v in (ev.get("usage") or {}).items():
+                        state["usage"][k] = state["usage"].get(k, 0) + (v or 0)
+                elif ev.get("type") in ("turn.failed", "error"):
+                    state["fail"] = str((ev.get("error") or {}).get("message") or ev.get("message"))[:300]
 
     errlines: list = []
     th = threading.Thread(target=reader, daemon=True)
@@ -263,6 +309,9 @@ def run_job(ed: Editor, job: dict, args) -> None:
         log(f"job {jid}: cancelado no editor")
         return
     res = state["result"] or {}
+    if engine == "codex":
+        last = folder / "ultima_mensagem.txt"
+        res = {"result": last.read_text(encoding="utf-8", errors="replace") if last.is_file() else (state["fail"] or "")}
     if state["stop"]:
         ed.call(f"/ai/jobs/{jid}", {"status": "error", "message": f"parado: {state['stop']}; pasta {folder}"})
         log(f"job {jid}: {state['stop']}")
@@ -289,9 +338,11 @@ def run_job(ed: Editor, job: dict, args) -> None:
                          encoding="utf-8", errors="replace")
     errs = [ln[5:] for ln in chk.stdout.splitlines() if ln.startswith("ERRO ")]
     cost = res.get("total_cost_usd")
+    u = state["usage"]
+    tokens = f", {(u.get('input_tokens', 0) + u.get('output_tokens', 0)) / 1000:.0f} mil tokens" if u else ""
     summary = " ".join(str(res.get("result") or "").split())[:600]
     msg = (f"{len(corr['walls'])} paredes, {len(corr['openings'])} aberturas em {minutes:.0f} min, {state['steps']} passos"
-           + (f", custo estimado US$ {cost:.2f}" if isinstance(cost, (int, float)) else "")
+           + (f", custo estimado US$ {cost:.2f}" if isinstance(cost, (int, float)) else "") + tokens
            + (f". Sobraram {len(errs)} erro(s) da verificação: {'; '.join(errs[:4])}" if errs else ". Verificação sem erros")
            + (f". Resumo: {summary}" if summary else ""))
     ed.call(f"/ai/jobs/{jid}", {"status": "done", "result": corr, "message": msg})
@@ -303,8 +354,11 @@ def main() -> None:
     ap.add_argument("--editor", default=os.environ.get("EDITOR_URL", EDITOR))
     ap.add_argument("--name", default=socket.gethostname(), help="nome mostrado no editor")
     ap.add_argument("--workdir", default=str(Path.home() / ".wallextractor" / "claude_jobs"))
+    ap.add_argument("--engines", default="claude", help="quais filas atender: claude, codex ou claude,codex")
     ap.add_argument("--claude", default=shutil.which("claude") or "claude")
+    ap.add_argument("--codex", default=find_codex())
     ap.add_argument("--model", default="", help="repassado a claude --model (padrão: o do Claude Code)")
+    ap.add_argument("--codex-model", default="", help="repassado a codex exec -m (padrão: o do Codex)")
     ap.add_argument("--timeout-min", type=float, default=45)
     ap.add_argument("--poll", type=float, default=15, help="segundos entre pedidos de trabalho")
     ap.add_argument("--once", action="store_true")
@@ -313,10 +367,11 @@ def main() -> None:
     if not token:
         sys.exit("defina EDITOR_TOKEN (a senha do editor) no ambiente")
     ed = Editor(args.editor, token)
-    log(f"worker {args.name} pedindo trabalho a {args.editor} (Ctrl+C para sair)")
+    engines = [e.strip() for e in args.engines.split(",") if e.strip()]
+    log(f"worker {args.name} ({', '.join(engines)}) pedindo trabalho a {args.editor} (Ctrl+C para sair)")
     while True:
         try:
-            job = ed.call("/ai/jobs/claim", {"worker": args.name})["job"]
+            job = ed.call("/ai/jobs/claim", {"worker": args.name, "engines": engines})["job"]
         except (urllib.error.URLError, OSError, ValueError) as exc:
             log(f"editor fora do ar ({exc.__class__.__name__}); tento de novo")
             time.sleep(60)

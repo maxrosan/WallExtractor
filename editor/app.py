@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from wallextractor.schema import WallPlan, validate
-from .store import JOB_STATUSES, STATUSES, Store
+from .store import ENGINES, JOB_STATUSES, STATUSES, Store
 
 DATA_ROOT = os.environ.get("EDITOR_DATA", "/data")
 TOKEN = os.environ.get("EDITOR_TOKEN", "")
@@ -691,21 +691,25 @@ def export_one(pid: str):
 
 # ---------------------------------------------------------------- Claude Code on the user's computer
 # The editor cannot reach the user's computer, so the computer comes to the editor: scripts/claude_worker.py
-# claims queued plans, downloads the same package as "Pedir ajuda à IA", runs `claude -p` on it and posts the
-# correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
+# claims queued plans, downloads the same package as "Pedir ajuda à IA", runs `claude -p` (engine "claude") or
+# `codex exec` (engine "codex", ChatGPT) on it and posts the correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
 _workers: Dict[str, float] = {}  # worker name -> last time it asked for work
+_worker_engines: Dict[str, List[str]] = {}  # worker name -> engines it runs
 
 
 @app.post("/api/ai/jobs", dependencies=[Depends(auth)])
 def ai_jobs_add(body: Dict[str, Any]) -> dict:
     ids = [str(i) for i in body.get("ids") or []]
+    engine = body.get("engine") or "claude"
     if not ids:
         raise HTTPException(422, "nenhuma planta escolhida")
+    if engine not in ENGINES:
+        raise HTTPException(422, f"engine deve ser um de {ENGINES}")
     added, skipped = [], []
     for pid in ids:
         if store.get(pid) is None:
             skipped.append({"pid": pid, "why": "planta não está no editor"})
-        elif store.job_add(pid) is None:
+        elif store.job_add(pid, engine) is None:
             skipped.append({"pid": pid, "why": "já está na fila"})
         else:
             added.append(pid)
@@ -715,14 +719,17 @@ def ai_jobs_add(body: Dict[str, Any]) -> dict:
 @app.get("/api/ai/jobs", dependencies=[Depends(auth)])
 def ai_jobs_list() -> dict:
     now = time.time()
-    return {"jobs": store.job_list(), "workers": [{"name": k, "seen_s": round(now - v)} for k, v in _workers.items()]}
+    return {"jobs": store.job_list(), "workers": [{"name": k, "seen_s": round(now - v), "engines": _worker_engines.get(k, [])}
+                                                for k, v in _workers.items()]}
 
 
 @app.post("/api/ai/jobs/claim", dependencies=[Depends(auth)])
 def ai_jobs_claim(body: Dict[str, Any]) -> dict:
     worker = str(body.get("worker") or "worker")[:60]
+    engines = [str(e) for e in body.get("engines") or ["claude"]]
     _workers[worker] = time.time()
-    job = store.job_claim(worker)
+    _worker_engines[worker] = [e for e in engines if e in ENGINES]
+    job = store.job_claim(worker, engines)
     if job is not None:
         job["title"] = (store.get(job["pid"]) or {}).get("title")
     return {"job": job}

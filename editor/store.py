@@ -5,8 +5,9 @@ Layout under ``EDITOR_DATA`` (default ``/data``):
   pdfs/<id>.pdf            the uploaded PDF
   renders/<id>.png         base render of the plan region (long side 2000 px)
 
-The ai_jobs table is the queue of plans waiting for a correction by Claude Code on the user's own
-computer (scripts/claude_worker.py claims a job, runs it and posts the result back).
+The ai_jobs table is the queue of plans waiting for a correction by an AI agent on the user's own
+computer (scripts/claude_worker.py claims a job, runs Claude Code or the Codex CLI on it and posts the result
+back); `engine` says which one.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 STATUSES = ("pending", "corrected", "skipped")
 JOB_STATUSES = ("queued", "running", "done", "error", "cancelled")
+ENGINES = ("claude", "codex")
 JOB_STALE_S = 15 * 60  # a running job without news from its worker for this long is given up
 
 
@@ -42,6 +44,8 @@ class Store:
                     id INTEGER PRIMARY KEY AUTOINCREMENT, pid TEXT, status TEXT, created REAL, updated REAL,
                     worker TEXT, message TEXT, result TEXT, applied INTEGER DEFAULT 0)"""
             )
+            if "engine" not in [r[1] for r in c.execute("PRAGMA table_info(ai_jobs)")]:
+                c.execute("ALTER TABLE ai_jobs ADD COLUMN engine TEXT DEFAULT 'claude'")
 
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.path, timeout=30)
@@ -129,7 +133,7 @@ class Store:
     # ------------------------------------------------------------ AI jobs
     @staticmethod
     def _job(r: sqlite3.Row, with_result: bool = False) -> dict:
-        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message")}
+        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message", "engine")}
         out["applied"] = bool(r["applied"])
         out["has_result"] = r["result"] is not None
         if with_result:
@@ -140,15 +144,15 @@ class Store:
         c.execute("UPDATE ai_jobs SET status = 'error', message = ?, updated = ? WHERE status = 'running' AND updated < ?",
                   ("o worker parou de dar notícias; peça de novo", time.time(), time.time() - JOB_STALE_S))
 
-    def job_add(self, pid: str) -> Optional[dict]:
-        """Queue a plan; None when it is already queued or running."""
+    def job_add(self, pid: str, engine: str = "claude") -> Optional[dict]:
+        """Queue a plan for `engine`; None when it is already queued or running (for any engine)."""
         now = time.time()
         with self._lock, self._conn() as c:
             self._expire_stale(c)
             if c.execute("SELECT 1 FROM ai_jobs WHERE pid = ? AND status IN ('queued', 'running')", (pid,)).fetchone():
                 return None
-            cur = c.execute("INSERT INTO ai_jobs (pid, status, created, updated, message) VALUES (?, 'queued', ?, ?, '')",
-                            (pid, now, now))
+            cur = c.execute("INSERT INTO ai_jobs (pid, status, created, updated, message, engine) "
+                            "VALUES (?, 'queued', ?, ?, '', ?)", (pid, now, now, engine))
             r = c.execute("SELECT * FROM ai_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
         return self._job(r)
 
@@ -169,11 +173,13 @@ class Store:
             r = c.execute("SELECT * FROM ai_jobs WHERE pid = ? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
         return self._job(r, with_result=True) if r else None
 
-    def job_claim(self, worker: str) -> Optional[dict]:
-        """The oldest queued job, now running for `worker`."""
+    def job_claim(self, worker: str, engines=("claude",)) -> Optional[dict]:
+        """The oldest queued job for one of `engines`, now running for `worker`."""
+        engines = [e for e in engines if e in ENGINES] or ["claude"]
         with self._lock, self._conn() as c:
             self._expire_stale(c)
-            r = c.execute("SELECT * FROM ai_jobs WHERE status = 'queued' ORDER BY id LIMIT 1").fetchone()
+            r = c.execute(f"SELECT * FROM ai_jobs WHERE status = 'queued' AND engine IN ({','.join('?' * len(engines))}) "
+                          "ORDER BY id LIMIT 1", engines).fetchone()
             if r is None:
                 return None
             c.execute("UPDATE ai_jobs SET status = 'running', worker = ?, message = 'começando', updated = ? WHERE id = ?",
