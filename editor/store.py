@@ -4,6 +4,9 @@ Layout under ``EDITOR_DATA`` (default ``/data``):
   editor.sqlite            plans table
   pdfs/<id>.pdf            the uploaded PDF
   renders/<id>.png         base render of the plan region (long side 2000 px)
+
+The ai_jobs table is the queue of plans waiting for a correction by Claude Code on the user's own
+computer (scripts/claude_worker.py claims a job, runs it and posts the result back).
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 STATUSES = ("pending", "corrected", "skipped")
+JOB_STATUSES = ("queued", "running", "done", "error", "cancelled")
+JOB_STALE_S = 15 * 60  # a running job without news from its worker for this long is given up
 
 
 class Store:
@@ -31,6 +36,11 @@ class Store:
                 """CREATE TABLE IF NOT EXISTS plans (
                     id TEXT PRIMARY KEY, title TEXT, file TEXT, page INTEGER, status TEXT,
                     created REAL, updated REAL, machine TEXT, corrected TEXT, meta TEXT)"""
+            )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS ai_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, pid TEXT, status TEXT, created REAL, updated REAL,
+                    worker TEXT, message TEXT, result TEXT, applied INTEGER DEFAULT 0)"""
             )
 
     def _conn(self) -> sqlite3.Connection:
@@ -111,6 +121,81 @@ class Store:
     def delete(self, pid: str) -> None:
         with self._lock, self._conn() as c:
             c.execute("DELETE FROM plans WHERE id = ?", (pid,))
+            c.execute("DELETE FROM ai_jobs WHERE pid = ?", (pid,))
         for p in (self.pdf_path(pid), self.render_path(pid)):
             if os.path.isfile(p):
                 os.remove(p)
+
+    # ------------------------------------------------------------ AI jobs
+    @staticmethod
+    def _job(r: sqlite3.Row, with_result: bool = False) -> dict:
+        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message")}
+        out["applied"] = bool(r["applied"])
+        out["has_result"] = r["result"] is not None
+        if with_result:
+            out["result"] = json.loads(r["result"]) if r["result"] else None
+        return out
+
+    def _expire_stale(self, c: sqlite3.Connection) -> None:
+        c.execute("UPDATE ai_jobs SET status = 'error', message = ?, updated = ? WHERE status = 'running' AND updated < ?",
+                  ("o worker parou de dar notícias; peça de novo", time.time(), time.time() - JOB_STALE_S))
+
+    def job_add(self, pid: str) -> Optional[dict]:
+        """Queue a plan; None when it is already queued or running."""
+        now = time.time()
+        with self._lock, self._conn() as c:
+            self._expire_stale(c)
+            if c.execute("SELECT 1 FROM ai_jobs WHERE pid = ? AND status IN ('queued', 'running')", (pid,)).fetchone():
+                return None
+            cur = c.execute("INSERT INTO ai_jobs (pid, status, created, updated, message) VALUES (?, 'queued', ?, ?, '')",
+                            (pid, now, now))
+            r = c.execute("SELECT * FROM ai_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return self._job(r)
+
+    def job_list(self, limit: int = 200) -> List[dict]:
+        with self._lock, self._conn() as c:
+            self._expire_stale(c)
+            rows = c.execute("SELECT * FROM ai_jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [self._job(r) for r in rows]
+
+    def job_get(self, jid: int, with_result: bool = False) -> Optional[dict]:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM ai_jobs WHERE id = ?", (jid,)).fetchone()
+        return self._job(r, with_result) if r else None
+
+    def job_latest(self, pid: str) -> Optional[dict]:
+        with self._lock, self._conn() as c:
+            self._expire_stale(c)
+            r = c.execute("SELECT * FROM ai_jobs WHERE pid = ? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+        return self._job(r, with_result=True) if r else None
+
+    def job_claim(self, worker: str) -> Optional[dict]:
+        """The oldest queued job, now running for `worker`."""
+        with self._lock, self._conn() as c:
+            self._expire_stale(c)
+            r = c.execute("SELECT * FROM ai_jobs WHERE status = 'queued' ORDER BY id LIMIT 1").fetchone()
+            if r is None:
+                return None
+            c.execute("UPDATE ai_jobs SET status = 'running', worker = ?, message = 'começando', updated = ? WHERE id = ?",
+                      (worker, time.time(), r["id"]))
+            r = c.execute("SELECT * FROM ai_jobs WHERE id = ?", (r["id"],)).fetchone()
+        return self._job(r)
+
+    def job_update(self, jid: int, status: Optional[str] = None, message: Optional[str] = None,
+                   result: Optional[dict] = None, applied: Optional[bool] = None) -> Optional[dict]:
+        if status is not None and status not in JOB_STATUSES:
+            raise ValueError(f"status must be one of {JOB_STATUSES}")
+        sets, args = ["updated = ?"], [time.time()]
+        for col, val in (("status", status), ("message", message)):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                args.append(val)
+        if result is not None:
+            sets.append("result = ?")
+            args.append(json.dumps(result, ensure_ascii=False))
+        if applied is not None:
+            sets.append("applied = ?")
+            args.append(int(applied))
+        with self._lock, self._conn() as c:
+            c.execute(f"UPDATE ai_jobs SET {', '.join(sets)} WHERE id = ?", (*args, jid))
+        return self.job_get(jid)

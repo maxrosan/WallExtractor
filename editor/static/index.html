@@ -18,6 +18,7 @@
     <div class="batch-bar">
       <label class="chk" title="Marcar ou desmarcar todas as plantas da lista"><input type="checkbox" id="pick-all"> todas</label>
       <button id="batch-get" disabled title="Um zip com o pacote de cada planta marcada e o prompt do lote">Baixar lote para IA (0)</button>
+      <button id="claude-batch" disabled title="Põe as plantas marcadas na fila do Claude Code no seu computador (scripts/claude_worker.py); cada correção volta como rascunho">Corrigir com Claude (0)</button>
       <label class="btn-like" title="O correcoes.json da IA, ou vários .json de uma vez; cada correção entra como rascunho na sua planta">
         <input type="file" id="batch-put" accept=".json,.txt,application/json,text/plain" multiple hidden>Importar lote</label>
       <div id="batch-status" class="muted small"></div>
@@ -96,6 +97,17 @@
         <button id="ai-paste" title="Cole o texto da resposta, quando a IA devolve o JSON no chat em vez de um arquivo">Colar resposta</button>
       </div>
       <div id="ai-status" class="muted small">Baixe o pacote, envie ao Claude ou ao ChatGPT com o <span class="mono">PROMPT.txt</span> e importe o <span class="mono">correcao.json</span> (ou cole a resposta).</div>
+    </section>
+
+    <section class="panel">
+      <h3>Claude no computador</h3>
+      <div class="row">
+        <button id="claude-one" title="Põe esta planta na fila do Claude Code que roda no seu computador (scripts/claude_worker.py)">Corrigir com Claude</button>
+        <button id="claude-cancel" hidden>Cancelar</button>
+        <button id="claude-reapply" hidden title="Carrega de novo a correção do Claude por cima da tela (Ctrl+Z desfaz)">Carregar de novo</button>
+      </div>
+      <div id="claude-status" class="muted small"></div>
+      <div id="claude-worker" class="muted small"></div>
     </section>
 
     <section id="sel-panel" class="panel">

@@ -19,6 +19,9 @@ aside{background:var(--panel);overflow:auto;padding:12px;border-right:1px solid 
 .queue .m{color:var(--muted);font-size:12px}
 .queue .st{display:inline-block;font-size:11px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .queue .st.corrected{color:var(--door);border-color:var(--door)}
+.queue .st.job.running,.queue .st.job.queued{color:var(--window);border-color:var(--window)}
+.queue .st.job.done{color:var(--door);border-color:var(--door)}
+.queue .st.job.error{color:var(--danger);border-color:var(--danger)}
 .upload{display:block;margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:4px;text-align:center;cursor:pointer;color:var(--accent)}
 .muted{color:var(--muted)}.small{font-size:12px}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
 #center{display:flex;flex-direction:column;min-width:0}

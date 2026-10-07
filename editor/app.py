@@ -20,6 +20,7 @@ import math
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from typing import Any, Dict, List, Optional
 
@@ -30,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from wallextractor.schema import WallPlan, validate
-from .store import STATUSES, Store
+from .store import JOB_STATUSES, STATUSES, Store
 
 DATA_ROOT = os.environ.get("EDITOR_DATA", "/data")
 TOKEN = os.environ.get("EDITOR_TOKEN", "")
@@ -172,6 +173,7 @@ def get_plan(pid: str) -> dict:
     row = store.get(pid)
     if row is None:
         raise HTTPException(404)
+    row["ai_job"] = store.job_latest(pid)
     return row
 
 
@@ -687,6 +689,69 @@ def export_one(pid: str):
     return JSONResponse(p)
 
 
+# ---------------------------------------------------------------- Claude Code on the user's computer
+# The editor cannot reach the user's computer, so the computer comes to the editor: scripts/claude_worker.py
+# claims queued plans, downloads the same package as "Pedir ajuda à IA", runs `claude -p` on it and posts the
+# correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
+_workers: Dict[str, float] = {}  # worker name -> last time it asked for work
+
+
+@app.post("/api/ai/jobs", dependencies=[Depends(auth)])
+def ai_jobs_add(body: Dict[str, Any]) -> dict:
+    ids = [str(i) for i in body.get("ids") or []]
+    if not ids:
+        raise HTTPException(422, "nenhuma planta escolhida")
+    added, skipped = [], []
+    for pid in ids:
+        if store.get(pid) is None:
+            skipped.append({"pid": pid, "why": "planta não está no editor"})
+        elif store.job_add(pid) is None:
+            skipped.append({"pid": pid, "why": "já está na fila"})
+        else:
+            added.append(pid)
+    return {"added": added, "skipped": skipped}
+
+
+@app.get("/api/ai/jobs", dependencies=[Depends(auth)])
+def ai_jobs_list() -> dict:
+    now = time.time()
+    return {"jobs": store.job_list(), "workers": [{"name": k, "seen_s": round(now - v)} for k, v in _workers.items()]}
+
+
+@app.post("/api/ai/jobs/claim", dependencies=[Depends(auth)])
+def ai_jobs_claim(body: Dict[str, Any]) -> dict:
+    worker = str(body.get("worker") or "worker")[:60]
+    _workers[worker] = time.time()
+    job = store.job_claim(worker)
+    if job is not None:
+        job["title"] = (store.get(job["pid"]) or {}).get("title")
+    return {"job": job}
+
+
+@app.post("/api/ai/jobs/{jid}", dependencies=[Depends(auth)])
+def ai_jobs_update(jid: int, body: Dict[str, Any]) -> dict:
+    """Progress from the worker ({message}), its end ({status: done, result} or {status: error, message}),
+    a cancel from the page ({status: cancelled}) or the page saying it loaded the result ({applied: true})."""
+    job = store.job_get(jid)
+    if job is None:
+        raise HTTPException(404)
+    status = body.get("status")
+    if status is not None and status not in JOB_STATUSES:
+        raise HTTPException(422, f"status deve ser um de {JOB_STATUSES}")
+    if job["status"] in ("cancelled", "done", "error") and status not in (None, "cancelled"):
+        return job  # a worker reporting on a job the reviewer cancelled: ignored, and it sees the status
+    result = body.get("result")
+    if status == "done":
+        if not isinstance(result, dict) or not isinstance(result.get("walls"), list) or not isinstance(result.get("openings", []), list):
+            raise HTTPException(422, "result precisa de walls e openings")
+    if job["worker"]:
+        _workers[job["worker"]] = time.time()
+    msg = body.get("message")
+    return store.job_update(jid, status=status, message=str(msg)[:2000] if msg is not None else None,
+                            result=result if status == "done" else None,
+                            applied=bool(body["applied"]) if "applied" in body else None)
+
+
 @app.middleware("http")
 async def revalidate_static(request, call_next):
     """The page and its scripts are revalidated (ETag) on every load, so a deploy is picked up at once."""
@@ -697,3 +762,4 @@ async def revalidate_static(request, call_next):
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+
