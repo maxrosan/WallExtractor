@@ -215,6 +215,33 @@ def find_codex() -> str:
     return str(app[-1]) if app else (shutil.which("codex") or "codex")
 
 
+LIMIT = re.compile(r"usage limit|hit your (usage )?limit|limit reached|rate.?limit|quota", re.I)
+NAMES = {"claude": "Claude", "codex": "ChatGPT"}
+
+
+def limit_until(text: str) -> float | None:
+    """When the session stopped on the plan's usage limit: the time it comes back ("try again at 2:09 PM",
+    "resets 3pm", "...|1760000000"), or 30 min from now when the message has no time. None otherwise."""
+    if not text or not LIMIT.search(text):
+        return None
+    now = time.time()
+    m = re.search(r"\|(\d{10})\b", text)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"(?:at|resets?(?: at)?)\s+(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?", text, re.I)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2) or 0)
+        ap = (m.group(3) or "").lower().replace(".", "")
+        if ap == "pm" and h < 12:
+            h += 12
+        elif ap == "am" and h == 12:
+            h = 0
+        t = time.localtime(now)
+        at = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, h, mi, 0, 0, 0, -1))
+        return at if at > now else at + 86400
+    return now + 1800
+
+
 def find_json(text: str):
     """correcao.json missing: the JSON in the last message, if any."""
     for m in reversed(list(re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", text or "", re.S))):
@@ -307,7 +334,7 @@ def run_job(ed: Editor, job: dict, args) -> None:
     minutes = (time.time() - t0) / 60
     if state["stop"] == "cancelado no editor":
         log(f"job {jid}: cancelado no editor")
-        return
+        return None
     res = state["result"] or {}
     if engine == "codex":
         last = folder / "ultima_mensagem.txt"
@@ -315,7 +342,15 @@ def run_job(ed: Editor, job: dict, args) -> None:
     if state["stop"]:
         ed.call(f"/ai/jobs/{jid}", {"status": "error", "message": f"parado: {state['stop']}; pasta {folder}"})
         log(f"job {jid}: {state['stop']}")
-        return
+        return None
+    th_err.join(timeout=5)
+    until = limit_until(" ".join([state["fail"] or "", str(res.get("result") or ""), "".join(errlines)[-2000:]]))
+    if until and not (folder / "correcao.json").is_file():
+        back = time.strftime("%H:%M", time.localtime(until))
+        ed.call(f"/ai/jobs/{jid}", {"status": "queued",
+                                    "message": f"limite de uso do {NAMES.get(engine, engine)} até {back}; a planta voltou para a fila"})
+        log(f"job {jid}: limite de uso do {engine} até {back}; planta devolvida à fila")
+        return (engine, until)
 
     corr = None
     if (folder / "correcao.json").is_file():
@@ -326,12 +361,11 @@ def run_job(ed: Editor, job: dict, args) -> None:
             log(f"  correcao.json inválido: {exc}")
     corr = corr or find_json(res.get("result", ""))
     if not isinstance(corr, dict) or not isinstance(corr.get("walls"), list):
-        th_err.join(timeout=5)
         err = "".join(errlines)[-300:]
         why = res.get("result") or err or f"saída {proc.returncode}"
         ed.call(f"/ai/jobs/{jid}", {"status": "error", "message": f"sem correcao.json ({' '.join(str(why).split())[:300]}); pasta {folder}"})
         log(f"job {jid}: sem correcao.json")
-        return
+        return None
     corr.setdefault("openings", [])
     (folder / "_final.json").write_text(json.dumps(corr, ensure_ascii=False), encoding="utf-8")
     chk = subprocess.run([sys.executable, "verificar.py", "_final.json"], cwd=folder, capture_output=True, text=True,
@@ -347,6 +381,7 @@ def run_job(ed: Editor, job: dict, args) -> None:
            + (f". Resumo: {summary}" if summary else ""))
     ed.call(f"/ai/jobs/{jid}", {"status": "done", "result": corr, "message": msg})
     log(f"job {jid}: pronto. {msg[:200]}")
+    return None
 
 
 def main() -> None:
@@ -369,16 +404,30 @@ def main() -> None:
     ed = Editor(args.editor, token)
     engines = [e.strip() for e in args.engines.split(",") if e.strip()]
     log(f"worker {args.name} ({', '.join(engines)}) pedindo trabalho a {args.editor} (Ctrl+C para sair)")
+    paused: dict = {}  # engine -> time its usage limit ends
     while True:
+        now = time.time()
+        for e in [e for e, t in paused.items() if t <= now]:
+            log(f"{e}: limite de uso terminou, voltando a pedir trabalho")
+            del paused[e]
+        active = [e for e in engines if e not in paused]
+        if not active:
+            if args.once:
+                return
+            time.sleep(min(60.0, max(5.0, min(paused.values()) - now)))
+            continue
         try:
-            job = ed.call("/ai/jobs/claim", {"worker": args.name, "engines": engines})["job"]
+            job = ed.call("/ai/jobs/claim", {"worker": args.name, "engines": active})["job"]
         except (urllib.error.URLError, OSError, ValueError) as exc:
             log(f"editor fora do ar ({exc.__class__.__name__}); tento de novo")
             time.sleep(60)
             continue
         if job:
             try:
-                run_job(ed, job, args)
+                hit = run_job(ed, job, args)
+                if hit:
+                    paused[hit[0]] = hit[1]
+                    log(f"{hit[0]}: pausado até {time.strftime('%H:%M', time.localtime(hit[1]))}")
             except Exception as exc:  # noqa: BLE001 - one bad job must not stop the worker
                 log(f"job {job['id']}: falhou ({exc.__class__.__name__}: {exc})")
                 try:
