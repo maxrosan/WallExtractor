@@ -210,6 +210,34 @@ def describe_codex(event: dict) -> str | None:
     return kind.replace("_", " ")
 
 
+DOTENV = Path(__file__).resolve().parent.parent / ".env"  # repository root; in .gitignore
+
+
+def dotenv(name: str) -> str:
+    """NAME=value from the repository's .env (blank lines and # comments skipped, optional quotes)."""
+    if not DOTENV.is_file():
+        return ""
+    for line in DOTENV.read_text(encoding="utf-8-sig").splitlines():
+        k, sep, v = line.strip().partition("=")
+        if sep and not k.startswith("#") and k.strip().removeprefix("export ").strip() == name:
+            return v.strip().strip("'\"")
+    return ""
+
+
+def user_env(name: str) -> str:
+    """A variable from the process environment, the repository's .env or, on Windows, the user's saved
+    variables (a terminal opened before the variable was created, or inside an app started before, lacks it)."""
+    v = os.environ.get(name, "") or dotenv(name)
+    if v or os.name != "nt":
+        return v
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+            return str(winreg.QueryValueEx(k, name)[0])
+    except OSError:
+        return ""
+
+
 def find_codex() -> str:
     """The Codex desktop app ships a newer CLI than an old global npm install; prefer the newest of the two."""
     base = Path(os.environ.get("LOCALAPPDATA", "")) / "OpenAI" / "Codex" / "bin"
@@ -306,13 +334,15 @@ def run_job(ed: Editor, job: dict, args) -> None:
     env.pop("CODEX_API_KEY", None)
     env.pop("ANTHROPIC_API_KEY", None)  # subscription jobs stay on the subscription
     if engine == "anthropic":  # this run only: billed to the API key; the Claude Code login is left as it is
-        if not os.environ.get("CLAUDE_WORKER_API_KEY"):
-            raise RuntimeError("CLAUDE_WORKER_API_KEY não está no ambiente deste computador")
-        env["ANTHROPIC_API_KEY"] = os.environ["CLAUDE_WORKER_API_KEY"]
+        key = user_env("CLAUDE_WORKER_API_KEY")
+        if not key:
+            raise RuntimeError("CLAUDE_WORKER_API_KEY não está definida neste computador")
+        env["ANTHROPIC_API_KEY"] = key
     if engine == "openai":  # this run only: API-key auth, billed per token; the ChatGPT login is left as it is
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise RuntimeError("OPENAI_API_KEY não está no ambiente deste computador")
-        env["CODEX_API_KEY"] = os.environ["OPENAI_API_KEY"]
+        key = user_env("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY não está definida neste computador")
+        env["CODEX_API_KEY"] = key
     codex = engine in ("codex", "openai")
     proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             stdin=subprocess.PIPE if codex else subprocess.DEVNULL,
@@ -441,7 +471,7 @@ def main() -> None:
     ap.add_argument("--poll", type=float, default=15, help="segundos entre pedidos de trabalho")
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
-    token = os.environ.get("EDITOR_TOKEN", "")
+    token = user_env("EDITOR_TOKEN")
     if not token:
         sys.exit("defina EDITOR_TOKEN (a senha do editor) no ambiente")
     ed = Editor(args.editor, token)
