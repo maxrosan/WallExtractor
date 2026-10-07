@@ -185,10 +185,12 @@ consomem o mesmo JSON.
 - Trabalho direto na `main` (a branch `claude/vector-false-doors` acompanha).
   O EasyPanel constrói da `main`; cada mudança no editor é publicada com
   redeploy. A branch `claude/jolly-brown-ij69cl` pode ser apagada.
-- Fila do editor: 18 plantas de Bauru pendentes (escaneadas, enfileiradas em
-  2026-10-05) e 50 corrigidas (4 de escritório, 29 vetoriais
-  de SJC, 17 do portfólio raster de SJC, as do portfólio com ajuda de IA em
-  lote). Cópia local antiga em `data/gt` (33 plantas).
+- Fila do editor (2026-10-07): 68 corrigidas, nenhuma pendente (4 de escritório,
+  29 vetoriais de SJC, 17 do portfólio raster de SJC, 18 escaneadas de Bauru;
+  parte com ajuda de IA em lote ou do worker do Claude). Em 2026-10-07 as paredes
+  que passavam por cima de 16 aberturas em 8 plantas foram cortadas nas bordas
+  do vão (backup em `data/backup_before_cut/`). Cópia local antiga em `data/gt`
+  (33 plantas).
 - Vetorial V3 (branch `claude/vector-false-doors`, tol. 25 cm, 33 plantas,
   gabarito limpo): portas 167/179 com 11 falsas (F1 0,94), janelas 142/167
   com 17 falsas (F1 0,87). As 39 portas falsas herdadas da V2 foram tiradas
