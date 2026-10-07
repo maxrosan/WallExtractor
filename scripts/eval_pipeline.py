@@ -41,6 +41,39 @@ def raster(onnx_path: str, size: int):
     return run
 
 
+def cleanup(plan: dict) -> dict:
+    """Generic geometry on a raster draft (no drawing-style rules): near-axis segments snapped to the axis, then
+    the face detector's merging of collinear pieces, corner joining, cutting at openings and splitting at every
+    junction, as the editor's convention asks (wallextractor.faces)."""
+    import math
+    import statistics
+
+    from wallextractor import faces as F
+
+    ws = [dict(w, start=list(w["start"]), end=list(w["end"])) for w in plan["walls"]]
+    ops = [dict(o, start=list(o["start"]), end=list(o["end"])) for o in plan["openings"]]
+    if not ws:
+        return plan
+    t = statistics.median(w["thickness"] for w in ws) or 8.0
+    for x in ws + ops:  # snap: Hough segments come a degree or two off the axis
+        a = math.degrees(math.atan2(x["end"][1] - x["start"][1], x["end"][0] - x["start"][0])) % 180
+        if min(a, 180 - a) <= 6:
+            m = (x["start"][1] + x["end"][1]) / 2
+            x["start"][1] = x["end"][1] = m
+        elif abs(a - 90) <= 6:
+            m = (x["start"][0] + x["end"][0]) / 2
+            x["start"][0] = x["end"][0] = m
+    ws = F.mesclar_colineares(ws, t)
+    ws, _ = F.remover_isoladas(ws, t)
+    ws = F.ligar_cantos(ws, t)
+    ws = F.cortar_nos_vaos(ws, ops, t)
+    ws = F.remover_paredes_em_vaos(ws, ops, t)
+    ws = F.ligar_cantos(ws, t)
+    ws = F.dividir_nos_encontros(ws, t, aberturas=ops)
+    ws = F.remover_degeneradas(ws, t)
+    return {"walls": ws, "openings": ops}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True, help="folder written by wallextractor.vlm_data")
@@ -49,6 +82,7 @@ def main(argv=None) -> int:
     ap.add_argument("--size", type=int, default=768, help="segmentation input side (the editor uses 768)")
     ap.add_argument("--plans", default=None, help="list file of plan ids (default: every editor plan of the split)")
     ap.add_argument("--tols", default="0.015,0.05")
+    ap.add_argument("--cleanup", action="store_true", help="merge/join/split the raster walls (see cleanup)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
 
@@ -71,6 +105,8 @@ def main(argv=None) -> int:
     for n, r in enumerate(uniq, 1):
         img = Image.open(os.path.join(a.data, r["image"])).convert("RGB")
         pred = run(img)
+        if a.cleanup:
+            pred = cleanup(pred)
         gold, _ = decode_text(r["target"], img.width, img.height)
         side = max(img.width, img.height)
         rec = {"plan": r.get("plan"), "walls": [len(pred["walls"]), len(gold["walls"])],
@@ -94,7 +130,7 @@ def main(argv=None) -> int:
     for t, (cp, n_p, cg, n_g) in lens.items():
         p, r = cp / max(1, n_p), cg / max(1, n_g)
         wl[str(t)] = {"P": round(p, 3), "R": round(r, 3), "F1": round(2 * p * r / (p + r), 3) if p + r else 0.0}
-    report = {"plans": len(uniq), "all": table, "wall_len": wl, "onnx": a.onnx, "size": a.size,
+    report = {"plans": len(uniq), "all": table, "wall_len": wl, "onnx": a.onnx, "size": a.size, "cleanup": a.cleanup,
               "elapsed_s": round(time.time() - t0)}
     print(json.dumps({k: report[k] for k in ("plans", "all", "wall_len")}, indent=1))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
