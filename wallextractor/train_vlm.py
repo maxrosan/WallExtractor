@@ -49,30 +49,27 @@ def messages(target: str = None) -> List[Dict]:
 
 
 class Encoder:
-    """Row -> model inputs with labels on the answer only."""
+    """Row -> model inputs with labels on the answer only. Works with any chat template: the answer is what the
+    whole conversation adds after the prompt with the generation header (for Qwen, what follows
+    ``<|im_start|>assistant\\n``), and its tokens are counted back from the end of the sequence."""
 
     def __init__(self, processor, data_dir: str, max_len: int):
         self.p = processor
         self.dir = data_dir
         self.max_len = max_len
-        tok = processor.tokenizer
-        self.header = tok.encode("<|im_start|>assistant\n", add_special_tokens=False)
+        self.prompt = processor.apply_chat_template(messages(), tokenize=False, add_generation_prompt=True)
 
     def __call__(self, row: Dict):
         img = Image.open(os.path.join(self.dir, row["image"])).convert("RGB")
         text = self.p.apply_chat_template(messages(row["target"]), tokenize=False)
+        if not text.startswith(self.prompt):
+            raise ValueError("chat template: the conversation does not start with the generation prompt")
         enc = self.p(text=[text], images=[img], return_tensors="pt")
         ids = enc["input_ids"][0]
         labels = torch.full_like(ids, -100)
-        h, n = self.header, len(self.header)
-        start = None
+        n_ans = len(self.p.tokenizer(text[len(self.prompt):], add_special_tokens=False)["input_ids"])
+        start = len(ids) - n_ans
         lst = ids.tolist()
-        for i in range(len(lst) - n, -1, -1):
-            if lst[i:i + n] == h:
-                start = i + n
-                break
-        if start is None:
-            raise ValueError("assistant header not found")
         labels[start:] = ids[start:]
         if len(lst) > self.max_len:
             return None  # an image + answer that long would be truncated mid-answer: skip it
@@ -80,11 +77,20 @@ class Encoder:
         return enc
 
 
-def build_model(name: str, r: int, alpha: int, dropout: float, grad_ckpt: bool = True):
+def set_max_patches(processor, n: int) -> None:
+    """Tile-based processors (InternVL) cut a 1024 px plan into up to 12 tiles of 256 tokens; fewer tiles keep
+    the sequence (image + a long answer) within memory. Saved with the processor, so evaluation uses it too."""
+    ip = getattr(processor, "image_processor", None)
+    if n and ip is not None and hasattr(ip, "max_patches"):
+        ip.max_patches = n
+
+
+def build_model(name: str, r: int, alpha: int, dropout: float, grad_ckpt: bool = True, max_patches: int = 0):
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
     processor = AutoProcessor.from_pretrained(name)
+    set_max_patches(processor, max_patches)
     model = AutoModelForImageTextToText.from_pretrained(name, dtype=torch.bfloat16, attn_implementation="sdpa")
     for p in model.parameters():
         p.requires_grad_(False)
@@ -118,7 +124,7 @@ def train(a) -> Dict:
     random.seed(a.seed)
     device = "cuda"
     os.makedirs(a.out, exist_ok=True)
-    model, processor = build_model(a.model, a.lora_r, a.lora_alpha, a.lora_dropout)
+    model, processor = build_model(a.model, a.lora_r, a.lora_alpha, a.lora_dropout, max_patches=a.max_patches)
     model.to(device)
     model.print_trainable_parameters()
     enc = Encoder(processor, a.data, a.max_len)
@@ -196,6 +202,7 @@ def main(argv=None) -> int:
     ap.add_argument("--lora-alpha", type=int, default=32)
     ap.add_argument("--lora-dropout", type=float, default=0.05)
     ap.add_argument("--max-len", type=int, default=4096)
+    ap.add_argument("--max-patches", type=int, default=0, help="tiles per image for tile-based processors (InternVL)")
     ap.add_argument("--max-minutes", type=float, default=0)
     ap.add_argument("--limit-train", type=int, default=0)
     ap.add_argument("--limit-val", type=int, default=0)
