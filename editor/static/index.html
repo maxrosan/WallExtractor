@@ -20,6 +20,7 @@
       <button id="batch-get" disabled title="Um zip com o pacote de cada planta marcada e o prompt do lote">Baixar lote para IA (0)</button>
       <button id="claude-batch" disabled title="Põe as plantas marcadas na fila do Claude Code no seu computador (scripts/claude_worker.py); cada correção volta como rascunho">Corrigir com Claude (0)</button>
       <button id="codex-batch" disabled title="Põe as plantas marcadas na fila do ChatGPT (Codex CLI) no seu computador (scripts/claude_worker.py --engines codex); cada correção volta como rascunho">Corrigir com ChatGPT (0)</button>
+      <button id="mini-batch" disabled title="Põe as plantas marcadas na fila do GPT-5.4 mini pela API da OpenAI (cobrado por token; scripts/claude_worker.py --engines openai)">Corrigir com GPT-5.4 mini (0)</button>
       <label class="btn-like" title="O correcoes.json da IA, ou vários .json de uma vez; cada correção entra como rascunho na sua planta">
         <input type="file" id="batch-put" accept=".json,.txt,application/json,text/plain" multiple hidden>Importar lote</label>
       <div id="batch-status" class="muted small"></div>
@@ -105,6 +106,7 @@
       <div class="row">
         <button id="claude-one" title="Põe esta planta na fila do Claude Code que roda no seu computador (scripts/claude_worker.py)">Corrigir com Claude</button>
         <button id="codex-one" title="Põe esta planta na fila do ChatGPT (Codex CLI) que roda no seu computador (scripts/claude_worker.py --engines codex)">Corrigir com ChatGPT</button>
+        <button id="mini-one" title="Põe esta planta na fila do GPT-5.4 mini pela API da OpenAI (cobrado por token, ~US$ 0,15 por planta; scripts/claude_worker.py --engines openai)">Corrigir com GPT-5.4 mini</button>
         <button id="claude-cancel" hidden>Cancelar</button>
         <button id="claude-reapply" hidden title="Carrega de novo a correção da IA por cima da tela (Ctrl+Z desfaz)">Carregar de novo</button>
       </div>

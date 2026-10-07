@@ -9,6 +9,7 @@ it; nothing is marked corrected.
     set EDITOR_TOKEN=...            (the editor password; never passed on the command line)
     python scripts/claude_worker.py                          # Claude jobs, until Ctrl+C
     python scripts/claude_worker.py --engines claude,codex   # Claude and ChatGPT jobs
+    python scripts/claude_worker.py --engines openai         # GPT by the OpenAI API (OPENAI_API_KEY, paid per token)
     python scripts/claude_worker.py --once                   # one plan, then exits
     python scripts/claude_worker.py --model sonnet           # passed to claude --model (--codex-model for codex)
 
@@ -216,7 +217,10 @@ def find_codex() -> str:
 
 
 LIMIT = re.compile(r"usage limit|hit your (usage )?limit|limit reached|rate.?limit|quota", re.I)
-NAMES = {"claude": "Claude", "codex": "ChatGPT"}
+NAMES = {"claude": "Claude", "codex": "ChatGPT", "openai": "GPT (API)"}
+# US$ per million tokens (input, cached input, output) for the cost line of API jobs
+PRICES = {"gpt-5.4-mini": (0.75, 0.075, 4.50), "gpt-5.4-nano": (0.20, 0.02, 1.25), "gpt-5.4": (2.50, 0.25, 15.0),
+          "gpt-6-luna": (0.10, 0.01, 0.50), "gpt-6-sol": (2.00, 0.20, 10.0), "gpt-6-astra": (10.0, 1.0, 50.0)}
 
 
 def limit_until(text: str) -> float | None:
@@ -256,20 +260,22 @@ def run_job(ed: Editor, job: dict, args) -> None:
     jid, pid = job["id"], job["pid"]
     folder = Path(args.workdir) / f"{time.strftime('%Y%m%d-%H%M%S')}_{pid}"
     folder.mkdir(parents=True, exist_ok=True)
-    log(f"job {jid}: planta {pid} ({job.get('title')}) em {folder}")
+    log(f"job {jid}: planta {pid} ({job.get('title')}) com {job.get('engine') or 'claude'}"
+        f"{' ' + job['model'] if job.get('model') else ''} em {folder}")
     ed.call(f"/ai/jobs/{jid}", {"message": "baixando o pacote"})
     zipfile.ZipFile(io.BytesIO(ed.call(f"/plans/{pid}/ai", raw=True, timeout=300))).extractall(folder)
     (folder / "verificar.py").write_text(VERIFY, encoding="utf-8")
 
     engine = job.get("engine") or "claude"
-    if engine == "codex":
+    model = job.get("model") or ""
+    if engine in ("codex", "openai"):
         # workspace-write: it writes only in the job folder; no network for its commands. The two whole images
         # go with the prompt; the zoomed tiles it opens itself.
         # the prompt goes through stdin: -i takes every argument after it as an image
         cmd = [args.codex, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C", str(folder),
                "-o", str(folder / "ultima_mensagem.txt")]
-        if args.codex_model:
-            cmd += ["-m", args.codex_model]
+        if model or args.codex_model:
+            cmd += ["-m", model or args.codex_model]
         cmd += ["-i", str(folder / "planta.png"), str(folder / "planta_numerada.png")]
     else:
         cmd = [args.claude, "-p", PROMPT.format(pid=pid), "--output-format", "stream-json", "--verbose",
@@ -280,10 +286,16 @@ def run_job(ed: Editor, job: dict, args) -> None:
             cmd += ["--model", args.model]
     env = {k: v for k, v in os.environ.items() if k != "EDITOR_TOKEN"}  # the session never sees the password
     env["PYTHONUTF8"] = "1"  # Windows: the session's Python scripts print accents without cp1252 errors
+    env.pop("CODEX_API_KEY", None)
+    if engine == "openai":  # this run only: API-key auth, billed per token; the ChatGPT login is left as it is
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError("OPENAI_API_KEY não está no ambiente deste computador")
+        env["CODEX_API_KEY"] = os.environ["OPENAI_API_KEY"]
+    codex = engine in ("codex", "openai")
     proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            stdin=subprocess.PIPE if engine == "codex" else subprocess.DEVNULL,
+                            stdin=subprocess.PIPE if codex else subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace", env=env)
-    if engine == "codex":
+    if codex:
         proc.stdin.write(PROMPT.format(pid=pid))
         proc.stdin.close()
     state = {"last": "começando", "steps": 0, "result": None, "stop": None, "usage": {}, "fail": None}
@@ -296,7 +308,7 @@ def run_job(ed: Editor, job: dict, args) -> None:
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                d = describe_codex(ev) if engine == "codex" else describe(ev)
+                d = describe_codex(ev) if codex else describe(ev)
                 if d:
                     state["last"], state["steps"] = d, state["steps"] + 1
                 if ev.get("type") == "result":
@@ -336,7 +348,7 @@ def run_job(ed: Editor, job: dict, args) -> None:
         log(f"job {jid}: cancelado no editor")
         return None
     res = state["result"] or {}
-    if engine == "codex":
+    if codex:
         last = folder / "ultima_mensagem.txt"
         res = {"result": last.read_text(encoding="utf-8", errors="replace") if last.is_file() else (state["fail"] or "")}
     if state["stop"]:
@@ -374,6 +386,10 @@ def run_job(ed: Editor, job: dict, args) -> None:
     cost = res.get("total_cost_usd")
     u = state["usage"]
     tokens = f", {(u.get('input_tokens', 0) + u.get('output_tokens', 0)) / 1000:.0f} mil tokens" if u else ""
+    if engine == "openai" and u and model in PRICES:
+        pi, pc, po = PRICES[model]
+        cached = u.get("cached_input_tokens", 0)
+        cost = ((u.get("input_tokens", 0) - cached) * pi + cached * pc + u.get("output_tokens", 0) * po) / 1e6
     summary = " ".join(str(res.get("result") or "").split())[:600]
     msg = (f"{len(corr['walls'])} paredes, {len(corr['openings'])} aberturas em {minutes:.0f} min, {state['steps']} passos"
            + (f", custo estimado US$ {cost:.2f}" if isinstance(cost, (int, float)) else "") + tokens

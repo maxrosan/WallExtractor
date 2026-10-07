@@ -730,7 +730,7 @@ $("#paste-ok").addEventListener("click", () => {
 function pickedUpdate() {
   const n = S.picked.size; $("#batch-get").textContent = `Baixar lote para IA (${n})`; $("#batch-get").disabled = !n;
   $("#claude-batch").textContent = `Corrigir com Claude (${n})`; $("#claude-batch").disabled = !n;
-  $("#codex-batch").textContent = `Corrigir com ChatGPT (${n})`; $("#codex-batch").disabled = !n;
+  for (const b of AI_BUTTONS) { $(`#${b.id}-batch`).textContent = `Corrigir com ${b.label} (${n})`; $(`#${b.id}-batch`).disabled = !n; }
   const boxes = $$("#queue input.pick"); $("#pick-all").checked = boxes.length > 0 && boxes.every(b => b.checked);
 }
 $("#pick-all").addEventListener("change", e => { for (const b of $$("#queue input.pick")) { b.checked = e.target.checked;
@@ -795,8 +795,15 @@ $("#batch-close").addEventListener("click", () => { $("#batch-modal").hidden = t
 // runs `claude -p` (Claude) or `codex exec` (ChatGPT) on the AI package and posts the correction back. A finished correction is loaded into the plan
 // as soon as it is open here (as an import: warnings shown, Ctrl+Z undoes), and stays a draft until reviewed.
 S.jobs = {}; S.workers = []; S.jobTimer = null; S.queuePos = [];
-const ENGINE = { claude: "Claude", codex: "ChatGPT" };
-const eng = j => ENGINE[j.engine] || "Claude";
+const ENGINE = { claude: "Claude", codex: "ChatGPT", openai: "GPT (API)" };
+// One pair of buttons (this plan / the picked plans) per engine and model; ids #<id>-one and #<id>-batch.
+const AI_BUTTONS = [
+  { id: "claude", engine: "claude", label: "Claude" },
+  { id: "codex", engine: "codex", label: "ChatGPT" },
+  { id: "mini", engine: "openai", model: "gpt-5.4-mini", label: "GPT-5.4 mini" },
+];
+const MODEL_LABEL = Object.fromEntries(AI_BUTTONS.filter(b => b.model).map(b => [b.model, b.label]));
+const eng = j => (j.model && MODEL_LABEL[j.model]) || j.model || ENGINE[j.engine] || "Claude";
 function jobBadge(pid) {
   const j = S.jobs[pid]; if (!j || j.status === "cancelled") return "";
   const t = { queued: `na fila do ${eng(j)}`, running: `${eng(j)} corrigindo`, error: `${eng(j)} falhou`,
@@ -825,14 +832,14 @@ function claudePanel() {
   const j = S.pid && S.jobs[S.pid]; const el = $("#claude-status");
   const active = !!(j && (j.status === "queued" || j.status === "running"));
   $("#claude-cancel").hidden = !active; $("#claude-reapply").hidden = !(j && j.status === "done");
-  $("#claude-one").disabled = $("#codex-one").disabled = !S.pid || active;
+  for (const b of AI_BUTTONS) $(`#${b.id}-one`).disabled = !S.pid || active;
   const live = S.workers.filter(w => w.seen_s < 90);
   $("#claude-worker").innerHTML = live.length ? `Computador conectado: ${live.map(w => `${esc(w.name)} (${(w.engines || ["claude"]).map(e => ENGINE[e] || e).join(" e ")})`).join(", ")}.`
-    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py --engines claude,codex</span> (ver docs/editor.md).`;
+    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py --engines claude,codex,openai</span> (ver docs/editor.md).`;
   if (j && j.status === "done" && el.dataset.job === String(j.id)) return;  // keeps the import warnings on screen
   el.className = "small muted"; delete el.dataset.job;
   if (!S.pid) el.textContent = "Abra uma planta da fila.";
-  else if (!j) el.textContent = "O Claude Code ou o ChatGPT (Codex) do seu computador corrige a planta sozinho e devolve um rascunho para você revisar.";
+  else if (!j) el.textContent = "O Claude Code ou o GPT (Codex) do seu computador corrige a planta sozinho e devolve um rascunho para você revisar.";
   else if (j.status === "queued") { const k = S.queuePos.indexOf(S.pid) + 1; el.textContent = `Na fila${k ? ` (posição ${k})` : ""}, há ${ago(j.created)}.`; }
   else if (j.status === "running") el.textContent = `${eng(j)} corrigindo (${j.worker || "?"}): ${j.message || "…"} · última notícia há ${ago(j.updated)}.`;
   else if (j.status === "done") el.textContent = `${eng(j)} terminou há ${ago(j.updated)}${j.applied ? "; a correção já foi carregada nesta planta" : ""}. ${j.message || ""}`;
@@ -845,18 +852,18 @@ async function claudeAutoApply(job) {
   if (job.message) el.insertAdjacentHTML("beforeend", `<br><span class="muted">Do computador: ${esc(job.message)}</span>`);
   try { S.jobs[job.pid] = await api(`/ai/jobs/${job.id}`, { method: "POST", json: { applied: true } }); } catch (e) { /* loaded again next time */ }
 }
-async function claudeQueue(ids, engine) { const d = await api("/ai/jobs", { method: "POST", json: { ids, engine } }); await loadJobs(); return d; }
-for (const engine of ["claude", "codex"]) {
-  $(`#${engine}-one`).addEventListener("click", async () => {
+async function claudeQueue(ids, b) { const d = await api("/ai/jobs", { method: "POST", json: { ids, engine: b.engine, model: b.model } }); await loadJobs(); return d; }
+for (const b of AI_BUTTONS) {
+  $(`#${b.id}-one`).addEventListener("click", async () => {
     if (!S.pid) return; if (S.dirty) await save();
-    try { const d = await claudeQueue([S.pid], engine); if (!d.added.length) $("#claude-status").textContent = d.skipped.map(x => x.why).join("; "); }
+    try { const d = await claudeQueue([S.pid], b); if (!d.added.length) $("#claude-status").textContent = d.skipped.map(x => x.why).join("; "); }
     catch (err) { $("#claude-status").textContent = "Não enfileirado: " + err.message; $("#claude-status").className = "small err"; }
   });
-  $(`#${engine}-batch`).addEventListener("click", async () => {
+  $(`#${b.id}-batch`).addEventListener("click", async () => {
     const ids = [...S.picked]; if (!ids.length) return; if (S.dirty) await save();
     try {
-      const d = await claudeQueue(ids, engine);
-      $("#batch-status").textContent = `${d.added.length} planta(s) na fila do ${ENGINE[engine]}` + (d.skipped.length ? `; ${d.skipped.length} já estava(m) na fila ou não existe(m)` : "") + ".";
+      const d = await claudeQueue(ids, b);
+      $("#batch-status").textContent = `${d.added.length} planta(s) na fila do ${b.label}` + (d.skipped.length ? `; ${d.skipped.length} já estava(m) na fila ou não existe(m)` : "") + ".";
     } catch (err) { $("#batch-status").textContent = "Não enfileirado: " + err.message; }
   });
 }

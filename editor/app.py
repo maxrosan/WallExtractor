@@ -692,7 +692,8 @@ def export_one(pid: str):
 # ---------------------------------------------------------------- Claude Code on the user's computer
 # The editor cannot reach the user's computer, so the computer comes to the editor: scripts/claude_worker.py
 # claims queued plans, downloads the same package as "Pedir ajuda à IA", runs `claude -p` (engine "claude") or
-# `codex exec` (engine "codex", ChatGPT) on it and posts the correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
+# `codex exec` (engine "codex", ChatGPT subscription; engine "openai", the OpenAI API with the job's model) on it
+# and posts the correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
 _workers: Dict[str, float] = {}  # worker name -> last time it asked for work
 _worker_engines: Dict[str, List[str]] = {}  # worker name -> engines it runs
 
@@ -701,6 +702,9 @@ _worker_engines: Dict[str, List[str]] = {}  # worker name -> engines it runs
 def ai_jobs_add(body: Dict[str, Any]) -> dict:
     ids = [str(i) for i in body.get("ids") or []]
     engine = body.get("engine") or "claude"
+    model = str(body.get("model") or "").strip() or None
+    if model is not None and not all(ch.isalnum() or ch in ".-_" for ch in model):
+        raise HTTPException(422, "nome de modelo inválido")
     if not ids:
         raise HTTPException(422, "nenhuma planta escolhida")
     if engine not in ENGINES:
@@ -709,7 +713,7 @@ def ai_jobs_add(body: Dict[str, Any]) -> dict:
     for pid in ids:
         if store.get(pid) is None:
             skipped.append({"pid": pid, "why": "planta não está no editor"})
-        elif store.job_add(pid, engine) is None:
+        elif store.job_add(pid, engine, model) is None:
             skipped.append({"pid": pid, "why": "já está na fila"})
         else:
             added.append(pid)

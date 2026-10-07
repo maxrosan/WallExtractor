@@ -7,7 +7,8 @@ Layout under ``EDITOR_DATA`` (default ``/data``):
 
 The ai_jobs table is the queue of plans waiting for a correction by an AI agent on the user's own
 computer (scripts/claude_worker.py claims a job, runs Claude Code or the Codex CLI on it and posts the result
-back); `engine` says which one.
+back); `engine` says which one (claude, codex = ChatGPT subscription, openai = OpenAI API through the
+Codex CLI) and `model` which model, when not the engine's default.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 STATUSES = ("pending", "corrected", "skipped")
 JOB_STATUSES = ("queued", "running", "done", "error", "cancelled")
-ENGINES = ("claude", "codex")
+ENGINES = ("claude", "codex", "openai")
 JOB_STALE_S = 15 * 60  # a running job without news from its worker for this long is given up
 
 
@@ -46,6 +47,8 @@ class Store:
             )
             if "engine" not in [r[1] for r in c.execute("PRAGMA table_info(ai_jobs)")]:
                 c.execute("ALTER TABLE ai_jobs ADD COLUMN engine TEXT DEFAULT 'claude'")
+            if "model" not in [r[1] for r in c.execute("PRAGMA table_info(ai_jobs)")]:
+                c.execute("ALTER TABLE ai_jobs ADD COLUMN model TEXT")
 
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.path, timeout=30)
@@ -133,7 +136,7 @@ class Store:
     # ------------------------------------------------------------ AI jobs
     @staticmethod
     def _job(r: sqlite3.Row, with_result: bool = False) -> dict:
-        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message", "engine")}
+        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message", "engine", "model")}
         out["applied"] = bool(r["applied"])
         out["has_result"] = r["result"] is not None
         if with_result:
@@ -144,15 +147,15 @@ class Store:
         c.execute("UPDATE ai_jobs SET status = 'error', message = ?, updated = ? WHERE status = 'running' AND updated < ?",
                   ("o worker parou de dar notícias; peça de novo", time.time(), time.time() - JOB_STALE_S))
 
-    def job_add(self, pid: str, engine: str = "claude") -> Optional[dict]:
+    def job_add(self, pid: str, engine: str = "claude", model: Optional[str] = None) -> Optional[dict]:
         """Queue a plan for `engine`; None when it is already queued or running (for any engine)."""
         now = time.time()
         with self._lock, self._conn() as c:
             self._expire_stale(c)
             if c.execute("SELECT 1 FROM ai_jobs WHERE pid = ? AND status IN ('queued', 'running')", (pid,)).fetchone():
                 return None
-            cur = c.execute("INSERT INTO ai_jobs (pid, status, created, updated, message, engine) "
-                            "VALUES (?, 'queued', ?, ?, '', ?)", (pid, now, now, engine))
+            cur = c.execute("INSERT INTO ai_jobs (pid, status, created, updated, message, engine, model) "
+                            "VALUES (?, 'queued', ?, ?, '', ?, ?)", (pid, now, now, engine, model))
             r = c.execute("SELECT * FROM ai_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
         return self._job(r)
 
