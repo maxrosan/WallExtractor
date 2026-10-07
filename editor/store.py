@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -49,6 +50,18 @@ class Store:
                 c.execute("ALTER TABLE ai_jobs ADD COLUMN engine TEXT DEFAULT 'claude'")
             if "model" not in [r[1] for r in c.execute("PRAGMA table_info(ai_jobs)")]:
                 c.execute("ALTER TABLE ai_jobs ADD COLUMN model TEXT")
+            if "cost_usd" not in [r[1] for r in c.execute("PRAGMA table_info(ai_jobs)")]:
+                for col in ("cost_usd REAL", "tokens INTEGER", "minutes REAL"):
+                    c.execute(f"ALTER TABLE ai_jobs ADD COLUMN {col}")
+            # jobs finished before these columns: the numbers are in the message text
+            for r in c.execute("SELECT id, message FROM ai_jobs WHERE status = 'done' AND minutes IS NULL").fetchall():
+                m = r["message"] or ""
+                cost = re.search(r"custo estimado US\$ (\d+(?:\.\d+)?)", m)
+                tok = re.search(r"(\d+) mil tokens", m)
+                mins = re.search(r" em (\d+) min", m)
+                c.execute("UPDATE ai_jobs SET cost_usd = ?, tokens = ?, minutes = ? WHERE id = ?",
+                          (float(cost.group(1)) if cost else None, int(tok.group(1)) * 1000 if tok else None,
+                           float(mins.group(1)) if mins else -1.0, r["id"]))
 
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.path, timeout=30)
@@ -136,7 +149,8 @@ class Store:
     # ------------------------------------------------------------ AI jobs
     @staticmethod
     def _job(r: sqlite3.Row, with_result: bool = False) -> dict:
-        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message", "engine", "model")}
+        out = {k: r[k] for k in ("id", "pid", "status", "created", "updated", "worker", "message", "engine", "model",
+                                         "cost_usd", "tokens", "minutes")}
         out["applied"] = bool(r["applied"])
         out["has_result"] = r["result"] is not None
         if with_result:
@@ -176,6 +190,21 @@ class Store:
             r = c.execute("SELECT * FROM ai_jobs WHERE pid = ? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
         return self._job(r, with_result=True) if r else None
 
+    def job_stats(self) -> List[dict]:
+        """Per engine and model, over the finished jobs: how many, mean cost, minutes and tokens, and the money
+        spent today and this month (local time of the server)."""
+        t = time.localtime()
+        day = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
+        month = time.mktime((t.tm_year, t.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT engine, COALESCE(model, '') AS model, COUNT(*) AS n, AVG(cost_usd) AS cost,
+                          AVG(NULLIF(minutes, -1.0)) AS minutes, AVG(tokens) AS tokens,
+                          SUM(CASE WHEN updated >= ? THEN cost_usd ELSE 0 END) AS today,
+                          SUM(CASE WHEN updated >= ? THEN cost_usd ELSE 0 END) AS month
+                   FROM ai_jobs WHERE status = 'done' GROUP BY engine, COALESCE(model, '')""", (day, month)).fetchall()
+        return [dict(r) for r in rows]
+
     def job_claim(self, worker: str, engines=("claude",)) -> Optional[dict]:
         """The oldest queued job for one of `engines`, now running for `worker`."""
         engines = [e for e in engines if e in ENGINES] or ["claude"]
@@ -191,7 +220,9 @@ class Store:
         return self._job(r)
 
     def job_update(self, jid: int, status: Optional[str] = None, message: Optional[str] = None,
-                   result: Optional[dict] = None, applied: Optional[bool] = None) -> Optional[dict]:
+                   result: Optional[dict] = None, applied: Optional[bool] = None,
+                   cost_usd: Optional[float] = None, tokens: Optional[int] = None,
+                   minutes: Optional[float] = None) -> Optional[dict]:
         if status is not None and status not in JOB_STATUSES:
             raise ValueError(f"status must be one of {JOB_STATUSES}")
         sets, args = ["updated = ?"], [time.time()]
@@ -205,6 +236,10 @@ class Store:
         if applied is not None:
             sets.append("applied = ?")
             args.append(int(applied))
+        for col, val in (("cost_usd", cost_usd), ("tokens", tokens), ("minutes", minutes)):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                args.append(val)
         with self._lock, self._conn() as c:
             c.execute(f"UPDATE ai_jobs SET {', '.join(sets)} WHERE id = ?", (*args, jid))
         return self.job_get(jid)

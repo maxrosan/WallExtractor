@@ -723,7 +723,7 @@ def ai_jobs_add(body: Dict[str, Any]) -> dict:
 @app.get("/api/ai/jobs", dependencies=[Depends(auth)])
 def ai_jobs_list() -> dict:
     now = time.time()
-    return {"jobs": store.job_list(), "workers": [{"name": k, "seen_s": round(now - v), "engines": _worker_engines.get(k, [])}
+    return {"jobs": store.job_list(), "stats": store.job_stats(), "workers": [{"name": k, "seen_s": round(now - v), "engines": _worker_engines.get(k, [])}
                                                 for k, v in _workers.items()]}
 
 
@@ -758,9 +758,16 @@ def ai_jobs_update(jid: int, body: Dict[str, Any]) -> dict:
     if job["worker"]:
         _workers[job["worker"]] = time.time()
     msg = body.get("message")
+    def num(key, kind):
+        try:
+            return kind(body[key]) if body.get(key) is not None else None
+        except (TypeError, ValueError):
+            return None
+
     return store.job_update(jid, status=status, message=str(msg)[:2000] if msg is not None else None,
                             result=result if status == "done" else None,
-                            applied=bool(body["applied"]) if "applied" in body else None)
+                            applied=bool(body["applied"]) if "applied" in body else None,
+                            cost_usd=num("cost_usd", float), tokens=num("tokens", int), minutes=num("minutes", float))
 
 
 @app.middleware("http")

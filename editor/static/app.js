@@ -814,7 +814,7 @@ function ago(t) { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); retu
 async function loadJobs() {
   clearTimeout(S.jobTimer);
   try {
-    const d = await api("/ai/jobs"); S.jobs = {}; S.workers = d.workers || [];
+    const d = await api("/ai/jobs"); S.jobs = {}; S.workers = d.workers || []; S.jobStats = d.stats || [];
     for (const j of d.jobs) if (!S.jobs[j.pid]) S.jobs[j.pid] = j;  // newest first: the first one is the latest
     S.queuePos = d.jobs.filter(j => j.status === "queued").sort((a, b) => a.id - b.id).map(j => j.pid);
   } catch (e) { S.jobTimer = setTimeout(loadJobs, 30000); return; }
@@ -828,7 +828,28 @@ async function loadJobs() {
   const busy = Object.values(S.jobs).some(j => j.status === "queued" || j.status === "running");
   S.jobTimer = setTimeout(loadJobs, busy ? 8000 : 60000);
 }
+// What a plan costs with each button, from the finished jobs of that engine and model. Only the OpenAI API is
+// billed per token; Claude's figure is what the same tokens would cost on the API (the subscription pays it) and
+// ChatGPT's subscription reports no cost at all.
+const usd = v => "US$ " + v.toFixed(2).replace(".", ",");
+function statOf(b) { return (S.jobStats || []).find(s => s.engine === b.engine && (s.model || "") === (b.model || "")); }
+function estimateText(b) {
+  const s = statOf(b); if (!s || !s.n) return `${b.label}: sem medição ainda`;
+  const parts = [];
+  if (s.cost != null) parts.push(`~${usd(s.cost)}${b.engine === "openai" ? "" : " equivalente (assinatura)"}`);
+  if (s.minutes != null) parts.push(`${Math.round(s.minutes)} min`);
+  if (s.cost == null && s.tokens) parts.push(`${Math.round(s.tokens / 1000)} mil tokens da cota`);
+  return `${b.label}: ${parts.join(", ")} por planta (média de ${s.n})`;
+}
+function costsPanel() {
+  const api = (S.jobStats || []).filter(s => s.engine === "openai");
+  const today = api.reduce((a, s) => a + (s.today || 0), 0), month = api.reduce((a, s) => a + (s.month || 0), 0);
+  $("#ai-costs").innerHTML = AI_BUTTONS.map(b => esc(estimateText(b))).join("<br>") +
+    `<br>Gasto com a API da OpenAI: hoje ${usd(today)}, no mês ${usd(month)}.`;
+  for (const b of AI_BUTTONS) { const t = estimateText(b); $(`#${b.id}-one`).dataset.est = t; $(`#${b.id}-batch`).dataset.est = t; }
+}
 function claudePanel() {
+  costsPanel();
   const j = S.pid && S.jobs[S.pid]; const el = $("#claude-status");
   const active = !!(j && (j.status === "queued" || j.status === "running"));
   $("#claude-cancel").hidden = !active; $("#claude-reapply").hidden = !(j && j.status === "done");
@@ -860,7 +881,15 @@ for (const b of AI_BUTTONS) {
     catch (err) { $("#claude-status").textContent = "Não enfileirado: " + err.message; $("#claude-status").className = "small err"; }
   });
   $(`#${b.id}-batch`).addEventListener("click", async () => {
-    const ids = [...S.picked]; if (!ids.length) return; if (S.dirty) await save();
+    const ids = [...S.picked]; if (!ids.length) return;
+    if (b.engine === "openai") {  // billed per token: say how much before sending a batch
+      const s = statOf(b);
+      const msg = s && s.cost != null
+        ? `${ids.length} planta(s) × ~${usd(s.cost)} ≈ ${usd(ids.length * s.cost)} na API da OpenAI (média de ${s.n} planta(s)). Mandar?`
+        : `${ids.length} planta(s) para o ${b.label} pela API da OpenAI; ainda não há medição de custo. Mandar?`;
+      if (!confirm(msg)) return;
+    }
+    if (S.dirty) await save();
     try {
       const d = await claudeQueue(ids, b);
       $("#batch-status").textContent = `${d.added.length} planta(s) na fila do ${b.label}` + (d.skipped.length ? `; ${d.skipped.length} já estava(m) na fila ou não existe(m)` : "") + ".";

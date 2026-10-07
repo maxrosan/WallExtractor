@@ -395,7 +395,9 @@ def run_job(ed: Editor, job: dict, args) -> None:
            + (f", custo estimado US$ {cost:.2f}" if isinstance(cost, (int, float)) else "") + tokens
            + (f". Sobraram {len(errs)} erro(s) da verificação: {'; '.join(errs[:4])}" if errs else ". Verificação sem erros")
            + (f". Resumo: {summary}" if summary else ""))
-    ed.call(f"/ai/jobs/{jid}", {"status": "done", "result": corr, "message": msg})
+    ed.call(f"/ai/jobs/{jid}", {"status": "done", "result": corr, "message": msg, "minutes": round(minutes, 1),
+                                "cost_usd": round(cost, 4) if isinstance(cost, (int, float)) else None,
+                                "tokens": (u.get("input_tokens", 0) + u.get("output_tokens", 0)) if u else None})
     log(f"job {jid}: pronto. {msg[:200]}")
     return None
 
