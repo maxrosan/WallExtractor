@@ -141,12 +141,20 @@ def main(argv=None) -> int:
     ap.add_argument("--split", default="val")
     ap.add_argument("--source", default=None, help="only rows of this source (editor / cubicasa)")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--plans", default=None, help="only these plans: a list file (one id per line) or ids with commas")
     ap.add_argument("--max-new-tokens", type=int, default=3000)
     ap.add_argument("--tols", default="0.015,0.05")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     rows = [r for r in load_rows(os.path.join(a.data, f"{a.split}.jsonl"), unique=True)
             if not a.source or r["source"] == a.source]
+    if a.plans:
+        if os.path.isfile(a.plans):
+            from .annotations import read_ids
+            keep = set(read_ids(a.plans))
+        else:
+            keep = {x.strip() for x in a.plans.split(",") if x.strip()}
+        rows = [r for r in rows if r.get("plan") in keep]
     if a.limit:
         rows = rows[:a.limit]
     model, processor = load(a.model, a.adapter)

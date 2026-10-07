@@ -1,0 +1,20 @@
+# Plantas do editor fora de todo treino (validação/teste fixo). Só IDs; uma por linha.
+# grupo: antigas = validação do E6/Q2 (2026-10-05)
+0667850cf8
+0b75708a17
+23e6dd49aa
+509faed704
+5b880930e0
+ac632b31e6
+aef82995f0
+ce92d07bce
+dbd3b0026c
+e5eb3aefb0
+# grupo: novas = Bauru e Caraguatatuba, sorteadas em 2026-10-07 (semente 7)
+7fbff269cd
+228c9e3fff
+89c6b7c150
+dcde0531e0
+0001e02a8f
+34b49911cd
+a7cb0e01d2

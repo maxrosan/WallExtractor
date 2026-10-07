@@ -56,7 +56,17 @@ def plan_to_mask(plan: Dict, shape: Optional[tuple] = None) -> np.ndarray:
     return mask
 
 
-def prepare(src: str, out: str, val_fraction: float = 0.2, seed: int = 0, log=print) -> dict:
+def read_ids(path: str) -> List[str]:
+    """Plan ids from a list file (one per line; blank lines and # comments ignored), e.g. splits/val_editor.txt."""
+    with open(path, encoding="utf-8") as f:
+        return [ln.split("#")[0].strip() for ln in f if ln.split("#")[0].strip()]
+
+
+def prepare(src: str, out: str, val_fraction: float = 0.2, seed: int = 0, log=print,
+            val_ids: Optional[List[str]] = None) -> dict:
+    """Split the editor pairs into train/val folders with masks. ``val_ids`` fixes the validation plans (the
+    rest is training, whatever is added later); without it a seeded random fraction is used, which changes
+    the split every time plans are added."""
     pairs: List[tuple] = []
     for jp in sorted(glob.glob(os.path.join(src, "*.json"))):
         if os.path.basename(jp) == "manifest.json":
@@ -66,10 +76,18 @@ def prepare(src: str, out: str, val_fraction: float = 0.2, seed: int = 0, log=pr
             pairs.append((ip, jp))
     if not pairs:
         raise SystemExit(f"[annotations] no png/json pairs in {src}")
-    rnd = random.Random(seed)
-    rnd.shuffle(pairs)
-    n_val = int(round(len(pairs) * val_fraction)) if len(pairs) >= 5 else 0
-    splits = {"val": pairs[:n_val], "train": pairs[n_val:]}
+    if val_ids is not None:
+        keep = set(val_ids)
+        name = lambda p: os.path.splitext(os.path.basename(p[0]))[0]  # noqa: E731
+        splits = {"val": [p for p in pairs if name(p) in keep], "train": [p for p in pairs if name(p) not in keep]}
+        missing = keep - {name(p) for p in pairs}
+        if missing:
+            log(f"[annotations] {len(missing)} validation plan(s) not in the export: {sorted(missing)}")
+    else:
+        rnd = random.Random(seed)
+        rnd.shuffle(pairs)
+        n_val = int(round(len(pairs) * val_fraction)) if len(pairs) >= 5 else 0
+        splits = {"val": pairs[:n_val], "train": pairs[n_val:]}
     stats = {}
     for split, items in splits.items():
         d = os.path.join(out, split)
@@ -96,9 +114,10 @@ def main(argv=None) -> int:
     ap.add_argument("--src", required=True, help="folder with <id>.png + <id>.json (editor export, unzipped)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--val-fraction", type=float, default=0.2)
+    ap.add_argument("--val-ids", default=None, help="file with the validation plan ids (splits/val_editor.txt)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
-    prepare(args.src, args.out, args.val_fraction, args.seed)
+    prepare(args.src, args.out, args.val_fraction, args.seed, val_ids=read_ids(args.val_ids) if args.val_ids else None)
     return 0
 
 

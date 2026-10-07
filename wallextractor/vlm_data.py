@@ -154,6 +154,28 @@ def scale_plan(plan: Dict, f: float, size: Tuple[int, int]) -> Dict:
     return p
 
 
+def dihedral(img: Image.Image, plan: Dict, k: int) -> Tuple[Image.Image, Dict]:
+    """Variant ``k`` (0-7) of the 8 rotations/mirrors of a plan: k % 4 quarter turns clockwise, then a
+    horizontal mirror when k >= 4. Image and coordinates move together; k = 0 is the original."""
+    p = json.loads(json.dumps(plan))
+    w, h = img.width, img.height
+    pts = []
+    for x in p.get("walls", []) + p.get("openings", []):
+        x.pop("polygon", None)
+        pts += [x["start"], x["end"]]
+    for _ in range(k % 4):  # clockwise: (x, y) -> (h - y, x), size (h, w)
+        img = img.transpose(Image.Transpose.ROTATE_270)
+        for q in pts:
+            q[0], q[1] = h - q[1], q[0]
+        w, h = h, w
+    if k >= 4:
+        img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        for q in pts:
+            q[0] = w - q[0]
+    p["image"]["width"], p["image"]["height"] = w, h
+    return img, p
+
+
 def fit_side(w: int, h: int, side: int, multiple: int = 32) -> Tuple[int, int, float]:
     """Size with the long side ``side`` (rounded to ``multiple``) and the uniform factor used."""
     f = side / max(w, h)
@@ -173,7 +195,10 @@ def _items(folder: str) -> List[Tuple[str, str, Optional[str]]]:
 
 
 def build(cubicasa: Optional[str], corrections: Optional[str], out: str, side: int = 1024, repeat_corr: int = 20,
-          restyle_prob: float = 0.0, limit_cubicasa: int = 0, seed: int = 0, log=print) -> Dict[str, int]:
+          restyle_prob: float = 0.0, limit_cubicasa: int = 0, seed: int = 0, log=print,
+          augment: bool = False) -> Dict[str, int]:
+    """``augment``: in training, the repetitions of an editor plan are different rotations/mirrors of it
+    (``dihedral``) instead of the same image, so a plan seen 5 times is seen in 5 orientations."""
     from .styles import random_style, restyle_walls
 
     rng = random.Random(seed)
@@ -205,6 +230,18 @@ def build(cubicasa: Optional[str], corrections: Optional[str], out: str, side: i
                     mask = np.asarray(Image.open(mp))
                     style = random_style(rng, exclude_solid=True)
                     variants = [("_" + style, restyle_walls(arr, mask, style, rng=rng))]
+                if augment and name == "editor" and split == "train":
+                    ks = [0] + rng.sample(range(1, 8), min(7, max(0, rep - 1)))
+                    ks += [rng.randrange(8) for _ in range(rep - len(ks))]
+                    for k in ks:
+                        im2, p2 = dihedral(img, plan, k)
+                        w2, h2, _ = fit_side(im2.width, im2.height, side)
+                        rel = os.path.join("images", f"{name}_{split}_{base}_d{k}.png")
+                        if not os.path.isfile(os.path.join(out, rel)):
+                            im2.resize((w2, h2), Image.BILINEAR).save(os.path.join(out, rel))
+                        rows.append({"image": rel.replace(os.sep, "/"), "source": name, "plan": base, "variant": k,
+                                     "target": encode_plan(scale_plan(p2, w2 / im2.width, (w2, h2)))})
+                    continue
                 for suffix, a in variants:
                     rel = os.path.join("images", f"{name}_{split}_{base}{suffix}.png")
                     Image.fromarray(a).resize((nw, nh), Image.BILINEAR).save(os.path.join(out, rel))
@@ -233,8 +270,10 @@ def main(argv=None) -> int:
     ap.add_argument("--restyle-prob", type=float, default=0.0)
     ap.add_argument("--limit-cubicasa", type=int, default=0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--augment", action="store_true", help="editor plans in training: each repetition rotated/mirrored")
     a = ap.parse_args(argv)
-    build(a.cubicasa, a.corrections, a.out, a.side, a.repeat_corr, a.restyle_prob, a.limit_cubicasa, a.seed)
+    build(a.cubicasa, a.corrections, a.out, a.side, a.repeat_corr, a.restyle_prob, a.limit_cubicasa, a.seed,
+          augment=a.augment)
     return 0
 
 

@@ -29,6 +29,7 @@ def main() -> int:
     ap.add_argument("--prepared", default=None)
     ap.add_argument("--status", default="corrected", choices=["corrected", "all", "pending", "skipped"])
     ap.add_argument("--val-fraction", type=float, default=0.2)
+    ap.add_argument("--val-ids", default=None, help="file with the validation plan ids, e.g. splits/val_editor.txt")
     args = ap.parse_args()
     url = args.editor.rstrip("/") + f"/api/export?status={args.status}"
     req = urllib.request.Request(url, headers={"X-Token": args.token} if args.token else {})
@@ -40,9 +41,10 @@ def main() -> int:
         names = [n for n in z.namelist() if n.endswith(".json") and n != "manifest.json"]
     print(f"[fetch] {len(names)} plans -> {args.out}")
     if args.prepared:
-        from wallextractor.annotations import prepare
+        from wallextractor.annotations import prepare, read_ids
 
-        prepare(args.out, args.prepared, val_fraction=args.val_fraction)
+        prepare(args.out, args.prepared, val_fraction=args.val_fraction,
+                val_ids=read_ids(args.val_ids) if args.val_ids else None)
     return 0
 
 
