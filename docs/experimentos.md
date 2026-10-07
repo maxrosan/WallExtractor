@@ -656,3 +656,39 @@ das plantas brasileiras faz o Qwen decorar.
   (17 plantas, F1 a 1,5%): portas 0,759 -> 0,759, janelas 0,706 -> 0,699.
   Vitória Régia e Nova Bauru: 0 janelas falsas (antes 8 e 13); as paredes
   externas pintadas de azul forte continuam de fora.
+
+## Validação fixa, rascunho raster x Qwen na mesma métrica, Q3 e outros modelos (2026-10-07)
+
+79 plantas corrigidas. A validação passa a ser fixa (`splits/val_editor.txt`,
+`annotations.prepare --val-ids`): as 10 de validação do E6/Q2 ("antigas") e 7
+novas sorteadas entre Bauru e Caraguatatuba ("novas", estilos escaneado e
+colorido que nenhum modelo viu). As outras 62 são treino, e plantas novas
+só entram no treino.
+
+`scripts/eval_pipeline.py` mede o rascunho raster (SegFormer + `vectorize`,
+como o editor faz) com a métrica do Qwen (`wallextractor.vlm_metrics`: mesmas
+imagens de 1024 px, mesmo gabarito, F1 a 1,5% do lado maior). `--cleanup`
+aplica geometria genérica do detector de faces: endireita trechos a menos de
+6° do eixo, junta colineares, liga cantos, corta nos vãos e divide nos
+encontros.
+
+| grupo | rascunho | paredes (pontas) | paredes (comprimento) | portas | janelas |
+|---|---|---|---|---|---|
+| 7 novas | Q2 (Qwen 4B) | 0,22 | 0,81 | 0,17 | 0,31 |
+| 7 novas | E5 + vetorização | 0,15 | 0,92 | 0,68 | 0,81 |
+| 7 novas | E5 + vetorização + limpeza | 0,56 | 0,91 | 0,68 | 0,81 |
+| 10 antigas | Q2 | 0,23 | 0,73 | 0,35 | 0,30 |
+| 10 antigas | E5 + vetorização | 0,13 | 0,91 | 0,47 | 0,65 |
+| 10 antigas | E5 + vetorização + limpeza | 0,47 | 0,90 | 0,47 | 0,65 |
+
+O E5 viu 4 das 10 antigas no treino; nas 7 novas ninguém viu nada. O
+rascunho raster já ganhava do Qwen em comprimento, portas e janelas e só
+perdia nas pontas, por entregar a parede picotada; com a limpeza ganha em
+tudo.
+
+Em andamento no Pichau (`run_q3.sh`, `run_models.sh`): Q3 (Qwen3-VL-4B, 62
+plantas, repetição 5 com giros e espelhos, `vlm_data --augment`), E7 (receita
+do E6 na divisão fixa) e, com a receita do Q3, Qwen3-VL-2B e InternVL3.5-4B
+(`train_vlm` agora acha a resposta pelo modelo de chat de qualquer modelo;
+`--max-patches 6` no InternVL). O Qwen3-VL-8B em 4 bits precisa do
+bitsandbytes, que a imagem `we-vlm` não tem.
