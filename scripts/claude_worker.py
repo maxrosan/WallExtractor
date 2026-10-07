@@ -10,6 +10,7 @@ it; nothing is marked corrected.
     python scripts/claude_worker.py                          # Claude jobs, until Ctrl+C
     python scripts/claude_worker.py --engines claude,codex   # Claude and ChatGPT jobs
     python scripts/claude_worker.py --engines openai         # GPT by the OpenAI API (OPENAI_API_KEY, paid per token)
+    python scripts/claude_worker.py --engines anthropic      # Claude by the Anthropic API (CLAUDE_WORKER_API_KEY)
     python scripts/claude_worker.py --once                   # one plan, then exits
     python scripts/claude_worker.py --model sonnet           # passed to claude --model (--codex-model for codex)
 
@@ -217,7 +218,23 @@ def find_codex() -> str:
 
 
 LIMIT = re.compile(r"usage limit|hit your (usage )?limit|limit reached|rate.?limit|quota", re.I)
-NAMES = {"claude": "Claude", "codex": "ChatGPT", "openai": "GPT (API)"}
+NAMES = {"claude": "Claude", "codex": "ChatGPT", "openai": "GPT (API)", "anthropic": "Claude (API)"}
+# US$ per million tokens (input, cache read, output) for Claude through the API. Cache writes cost 1.25x input
+# (5 min) or 2x (1 h). The CLI's own total_cost_usd misprices models newer than itself.
+CLAUDE_PRICES = {"claude-sonnet-5-5": (2.0, 0.20, 10.0), "claude-opus-5-5": (4.0, 0.20, 20.0),
+                 "claude-sonnet-5": (2.0, 0.20, 10.0), "claude-haiku-4-5": (1.0, 0.10, 5.0)}
+
+
+def claude_cost(usage: dict, model: str):
+    p = CLAUDE_PRICES.get(model)
+    if not p or not usage:
+        return None
+    pi, pr, po = p
+    cc = usage.get("cache_creation") or {}
+    w1h = cc.get("ephemeral_1h_input_tokens", 0) or 0
+    w5m = cc.get("ephemeral_5m_input_tokens", usage.get("cache_creation_input_tokens", 0) - w1h) or 0
+    return (usage.get("input_tokens", 0) * pi + w5m * 1.25 * pi + w1h * 2 * pi
+            + usage.get("cache_read_input_tokens", 0) * pr + usage.get("output_tokens", 0) * po) / 1e6
 # US$ per million tokens (input, cached input, output) for the cost line of API jobs
 PRICES = {"gpt-5.4-mini": (0.75, 0.075, 4.50), "gpt-5.4-nano": (0.20, 0.02, 1.25), "gpt-5.4": (2.50, 0.25, 15.0),
           "gpt-6-luna": (0.10, 0.01, 0.50), "gpt-6-sol": (2.00, 0.20, 10.0), "gpt-6-astra": (10.0, 1.0, 50.0)}
@@ -282,11 +299,16 @@ def run_job(ed: Editor, job: dict, args) -> None:
                "--permission-mode", "acceptEdits",
                "--allowedTools", "Read", "Write", "Edit", "Glob", "Grep", "Bash(python *)", "Bash(python3 *)", "Bash(ls *)",
                "--disallowedTools", "WebFetch", "WebSearch", "Agent", "Task"]
-        if args.model:
-            cmd += ["--model", args.model]
+        if model or args.model:
+            cmd += ["--model", model or args.model]
     env = {k: v for k, v in os.environ.items() if k != "EDITOR_TOKEN"}  # the session never sees the password
     env["PYTHONUTF8"] = "1"  # Windows: the session's Python scripts print accents without cp1252 errors
     env.pop("CODEX_API_KEY", None)
+    env.pop("ANTHROPIC_API_KEY", None)  # subscription jobs stay on the subscription
+    if engine == "anthropic":  # this run only: billed to the API key; the Claude Code login is left as it is
+        if not os.environ.get("CLAUDE_WORKER_API_KEY"):
+            raise RuntimeError("CLAUDE_WORKER_API_KEY não está no ambiente deste computador")
+        env["ANTHROPIC_API_KEY"] = os.environ["CLAUDE_WORKER_API_KEY"]
     if engine == "openai":  # this run only: API-key auth, billed per token; the ChatGPT login is left as it is
         if not os.environ.get("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY não está no ambiente deste computador")
@@ -386,6 +408,9 @@ def run_job(ed: Editor, job: dict, args) -> None:
     cost = res.get("total_cost_usd")
     u = state["usage"]
     tokens = f", {(u.get('input_tokens', 0) + u.get('output_tokens', 0)) / 1000:.0f} mil tokens" if u else ""
+    if engine == "anthropic":
+        c2 = claude_cost(res.get("usage") or {}, model)
+        cost = c2 if c2 is not None else cost
     if engine == "openai" and u and model in PRICES:
         pi, pc, po = PRICES[model]
         cached = u.get("cached_input_tokens", 0)

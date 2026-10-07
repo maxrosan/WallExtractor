@@ -7,8 +7,8 @@ Layout under ``EDITOR_DATA`` (default ``/data``):
 
 The ai_jobs table is the queue of plans waiting for a correction by an AI agent on the user's own
 computer (scripts/claude_worker.py claims a job, runs Claude Code or the Codex CLI on it and posts the result
-back); `engine` says which one (claude, codex = ChatGPT subscription, openai = OpenAI API through the
-Codex CLI) and `model` which model, when not the engine's default.
+back); `engine` says which one (claude = Claude subscription, anthropic = Claude through the Anthropic API,
+codex = ChatGPT subscription, openai = OpenAI API through the Codex CLI) and `model` which model, when not the engine's default.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 STATUSES = ("pending", "corrected", "skipped")
 JOB_STATUSES = ("queued", "running", "done", "error", "cancelled")
-ENGINES = ("claude", "codex", "openai")
+ENGINES = ("claude", "codex", "openai", "anthropic")
 JOB_STALE_S = 15 * 60  # a running job without news from its worker for this long is given up
 
 

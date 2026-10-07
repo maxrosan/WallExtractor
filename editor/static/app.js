@@ -795,10 +795,13 @@ $("#batch-close").addEventListener("click", () => { $("#batch-modal").hidden = t
 // runs `claude -p` (Claude) or `codex exec` (ChatGPT) on the AI package and posts the correction back. A finished correction is loaded into the plan
 // as soon as it is open here (as an import: warnings shown, Ctrl+Z undoes), and stays a draft until reviewed.
 S.jobs = {}; S.workers = []; S.jobTimer = null; S.queuePos = [];
-const ENGINE = { claude: "Claude", codex: "ChatGPT", openai: "GPT (API)" };
+const ENGINE = { claude: "Claude", codex: "ChatGPT", openai: "GPT (API)", anthropic: "Claude (API)" };
+const PAID = new Set(["openai", "anthropic"]);  // billed per token, the others use a subscription
 // One pair of buttons (this plan / the picked plans) per engine and model; ids #<id>-one and #<id>-batch.
 const AI_BUTTONS = [
   { id: "claude", engine: "claude", label: "Claude" },
+  { id: "sonnet", engine: "anthropic", model: "claude-sonnet-5-5", label: "Claude Sonnet (API)" },
+  { id: "opusapi", engine: "anthropic", model: "claude-opus-5-5", label: "Claude Opus (API)" },
   { id: "codex", engine: "codex", label: "ChatGPT" },
   { id: "mini", engine: "openai", model: "gpt-5.4-mini", label: "GPT-5.4 mini" },
 ];
@@ -836,16 +839,16 @@ function statOf(b) { return (S.jobStats || []).find(s => s.engine === b.engine &
 function estimateText(b) {
   const s = statOf(b); if (!s || !s.n) return `${b.label}: sem medição ainda`;
   const parts = [];
-  if (s.cost != null) parts.push(`~${usd(s.cost)}${b.engine === "openai" ? "" : " equivalente (assinatura)"}`);
+  if (s.cost != null) parts.push(`~${usd(s.cost)}${PAID.has(b.engine) ? "" : " equivalente (assinatura)"}`);
   if (s.minutes != null) parts.push(`${Math.round(s.minutes)} min`);
   if (s.cost == null && s.tokens) parts.push(`${Math.round(s.tokens / 1000)} mil tokens da cota`);
   return `${b.label}: ${parts.join(", ")} por planta (média de ${s.n})`;
 }
 function costsPanel() {
-  const api = (S.jobStats || []).filter(s => s.engine === "openai");
-  const today = api.reduce((a, s) => a + (s.today || 0), 0), month = api.reduce((a, s) => a + (s.month || 0), 0);
+  const spent = (engine, key) => (S.jobStats || []).filter(s => s.engine === engine).reduce((a, s) => a + (s[key] || 0), 0);
   $("#ai-costs").innerHTML = AI_BUTTONS.map(b => esc(estimateText(b))).join("<br>") +
-    `<br>Gasto com a API da OpenAI: hoje ${usd(today)}, no mês ${usd(month)}.`;
+    `<br>Gasto com as APIs hoje: Anthropic ${usd(spent("anthropic", "today"))}, OpenAI ${usd(spent("openai", "today"))};` +
+    ` no mês: Anthropic ${usd(spent("anthropic", "month"))}, OpenAI ${usd(spent("openai", "month"))}.`;
   for (const b of AI_BUTTONS) { const t = estimateText(b); $(`#${b.id}-one`).dataset.est = t; $(`#${b.id}-batch`).dataset.est = t; }
 }
 function claudePanel() {
@@ -856,7 +859,7 @@ function claudePanel() {
   for (const b of AI_BUTTONS) $(`#${b.id}-one`).disabled = !S.pid || active;
   const live = S.workers.filter(w => w.seen_s < 90);
   $("#claude-worker").innerHTML = live.length ? `Computador conectado: ${live.map(w => `${esc(w.name)} (${(w.engines || ["claude"]).map(e => ENGINE[e] || e).join(" e ")})`).join(", ")}.`
-    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py --engines claude,codex,openai</span> (ver docs/editor.md).`;
+    : `<span class="err">Nenhum computador buscando trabalho agora.</span> No Lenovo, rode <span class="mono">python scripts/claude_worker.py --engines claude,anthropic,codex,openai</span> (ver docs/editor.md).`;
   if (j && j.status === "done" && el.dataset.job === String(j.id)) return;  // keeps the import warnings on screen
   el.className = "small muted"; delete el.dataset.job;
   if (!S.pid) el.textContent = "Abra uma planta da fila.";
@@ -882,11 +885,11 @@ for (const b of AI_BUTTONS) {
   });
   $(`#${b.id}-batch`).addEventListener("click", async () => {
     const ids = [...S.picked]; if (!ids.length) return;
-    if (b.engine === "openai") {  // billed per token: say how much before sending a batch
-      const s = statOf(b);
+    if (PAID.has(b.engine)) {  // billed per token: say how much before sending a batch
+      const s = statOf(b), who = b.engine === "openai" ? "da OpenAI" : "da Anthropic";
       const msg = s && s.cost != null
-        ? `${ids.length} planta(s) × ~${usd(s.cost)} ≈ ${usd(ids.length * s.cost)} na API da OpenAI (média de ${s.n} planta(s)). Mandar?`
-        : `${ids.length} planta(s) para o ${b.label} pela API da OpenAI; ainda não há medição de custo. Mandar?`;
+        ? `${ids.length} planta(s) × ~${usd(s.cost)} ≈ ${usd(ids.length * s.cost)} na API ${who} (média de ${s.n} planta(s)). Mandar?`
+        : `${ids.length} planta(s) para o ${b.label} pela API ${who}; ainda não há medição de custo. Mandar?`;
       if (!confirm(msg)) return;
     }
     if (S.dirty) await save();

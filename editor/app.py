@@ -693,7 +693,7 @@ def export_one(pid: str):
 # The editor cannot reach the user's computer, so the computer comes to the editor: scripts/claude_worker.py
 # claims queued plans, downloads the same package as "Pedir ajuda à IA", runs `claude -p` (engine "claude") or
 # `codex exec` (engine "codex", ChatGPT subscription; engine "openai", the OpenAI API with the job's model) on it
-# and posts the correction back. The correction is kept in the job and loaded into the plan when the reviewer opens it.
+# and posts the correction back; engine "anthropic" is `claude -p` billed to the Anthropic API. The correction is kept in the job and loaded into the plan when the reviewer opens it.
 _workers: Dict[str, float] = {}  # worker name -> last time it asked for work
 _worker_engines: Dict[str, List[str]] = {}  # worker name -> engines it runs
 
