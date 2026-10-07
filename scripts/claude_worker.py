@@ -338,6 +338,13 @@ def run_job(ed: Editor, job: dict, args) -> None:
         if not key:
             raise RuntimeError("CLAUDE_WORKER_API_KEY não está definida neste computador")
         env["ANTHROPIC_API_KEY"] = key
+        # straight to the API with this key: a worker started from inside a Claude Code session inherits that
+        # session's endpoint and credentials
+        for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"):
+            env.pop(k, None)
+        ws = user_env("CLAUDE_WORKER_WORKSPACE_ID")  # keys not scoped to a workspace (sk-ant-usr...) need it
+        if ws:
+            env["ANTHROPIC_CUSTOM_HEADERS"] = f"anthropic-workspace-id: {ws}"
     if engine == "openai":  # this run only: API-key auth, billed per token; the ChatGPT login is left as it is
         key = user_env("OPENAI_API_KEY")
         if not key:
