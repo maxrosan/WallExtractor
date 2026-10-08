@@ -692,3 +692,8 @@ do E6 na divisão fixa) e, com a receita do Q3, Qwen3-VL-2B e InternVL3.5-4B
 (`train_vlm` agora acha a resposta pelo modelo de chat de qualquer modelo;
 `--max-patches 6` no InternVL). O Qwen3-VL-8B em 4 bits precisa do
 bitsandbytes, que a imagem `we-vlm` não tem.
+
+A limpeza virou `vectorize.clean_plan` e o editor a aplica a todo rascunho
+raster desde 2026-10-08. Para o Qwen3-VL-8B (linguagem em 4 bits, QLoRA,
+`train_vlm --load-4bit`) há a imagem `we-vlm-bnb` (= `we-vlm` + bitsandbytes
+0.50.2) no Pichau; ele roda depois dos outros (`run_8b.sh`).

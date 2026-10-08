@@ -9,7 +9,11 @@ página estática) e `Dockerfile` na raiz.
 - **Fila de correção.** PDFs enviados pela página ou por `scripts/enqueue.py`
   são extraídos no servidor (ramo vetorial; raster se `EDITOR_MODEL` apontar
   para um `.onnx`) e entram como *pendente*. O revisor abre, corrige, marca
-  como *corrigida* e a próxima abre sozinha.
+  como *corrigida* e a próxima abre sozinha. No ramo raster, o rascunho do
+  SegFormer passa por `vectorize.clean_plan` (trechos quase alinhados ao eixo
+  endireitados, colineares juntados, cantos ligados, paredes cortadas nos
+  vãos e divididas nos encontros); nas 7 plantas de validação que nenhum
+  modelo viu, o F1 de paredes por pontas a 1,5% foi de 0,15 para 0,56.
 - **Editor de geometria.** Paredes e aberturas são segmentos com espessura,
   na escala já resolvida pelo extrator. Porta e janela se desenham arrastando
   sobre uma parede (a abertura pode passar do fim dela, para o vão que o
