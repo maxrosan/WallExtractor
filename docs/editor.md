@@ -14,6 +14,9 @@ página estática) e `Dockerfile` na raiz.
   endireitados, colineares juntados, cantos ligados, paredes cortadas nos
   vãos e divididas nos encontros); nas 7 plantas de validação que nenhum
   modelo viu, o F1 de paredes por pontas a 1,5% foi de 0,15 para 0,56.
+  "Refazer com SegFormer" (painel Rascunho, `POST /api/plans/{id}/segformer`)
+  roda o modelo em uso e a limpeza na imagem de qualquer planta, vetorial ou
+  escaneada, e carrega o resultado como importação (avisos, Ctrl+Z desfaz).
 - **Editor de geometria.** Paredes e aberturas são segmentos com espessura,
   na escala já resolvida pelo extrator. Porta e janela se desenham arrastando
   sobre uma parede (a abertura pode passar do fim dela, para o vão que o

@@ -88,6 +88,8 @@
 
     <section class="panel">
       <h3>Rascunho</h3>
+      <div class="row"><button id="segformer-get" title="Substitui a anotação da tela por um rascunho novo do SegFormer, o modelo treinado nas correções (Ctrl+Z desfaz)">Refazer com SegFormer</button></div>
+      <div id="segformer-status" class="muted small">Lê a imagem com o modelo treinado nas plantas corrigidas e entrega paredes contínuas, divididas nos encontros. Serve para qualquer estilo; confira portas e janelas.</div>
       <div class="row"><button id="faces-get" title="Substitui a anotação da tela por um rascunho novo, lido direto da imagem (Ctrl+Z desfaz)">Refazer com detector de faces</button></div>
       <div id="faces-status" class="muted small">Quando o rascunho vier picotado: lê as paredes como pares de linhas paralelas e portas/janelas pelas cores. Funciona melhor em plantas coloridas de BIM; confira sempre.</div>
     </section>

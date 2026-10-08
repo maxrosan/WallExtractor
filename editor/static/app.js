@@ -707,14 +707,20 @@ function importOpen(d, from, statusSel = "#ai-status") {
   el.innerHTML = `Importado ${esc(from)}: ${got.walls.length} paredes, ${got.openings.length} aberturas. Ctrl+Z desfaz.` +
     (got.notes ? `<br>Notas: ${esc(got.notes)}` : "") + (warn.length ? warnHtml(warn) : `<br>Nenhum aviso na verificação automática.`);
 }
-$("#faces-get").addEventListener("click", async () => {
-  if (!S.pid) { $("#faces-status").textContent = "Abra uma planta da fila primeiro."; return; }
-  const btn = $("#faces-get"), el = $("#faces-status"); btn.disabled = true; el.className = "small muted";
-  const t0 = Date.now(); const tick = setInterval(() => { el.textContent = `Lendo a imagem… ${Math.round((Date.now() - t0) / 1000)} s`; }, 300);
-  try { const d = await api(`/plans/${S.pid}/faces`, { method: "POST" }); clearInterval(tick); importOpen(d, "detector de faces", "#faces-status"); }
-  catch (err) { clearInterval(tick); el.textContent = "Não refeito: " + err.message; el.className = "small err"; }
-  finally { btn.disabled = false; }
-});
+// Redraw the plan on the server from its image (SegFormer or face detector); loaded as an import, Ctrl+Z undoes it.
+function redraftButton(id, route, label) {
+  $(`#${id}-get`).addEventListener("click", async () => {
+    const btn = $(`#${id}-get`), el = $(`#${id}-status`);
+    if (!S.pid) { el.textContent = "Abra uma planta da fila primeiro."; return; }
+    btn.disabled = true; el.className = "small muted";
+    const t0 = Date.now(); const tick = setInterval(() => { el.textContent = `Lendo a imagem… ${Math.round((Date.now() - t0) / 1000)} s`; }, 300);
+    try { const d = await api(`/plans/${S.pid}/${route}`, { method: "POST" }); clearInterval(tick); importOpen(d, label, `#${id}-status`); }
+    catch (err) { clearInterval(tick); el.textContent = "Não refeito: " + err.message; el.className = "small err"; }
+    finally { btn.disabled = false; }
+  });
+}
+redraftButton("segformer", "segformer", "do SegFormer");
+redraftButton("faces", "faces", "detector de faces");
 $("#ai-put").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f || !S.pid) return;
   try { importOpen(parseAnswer(await f.text()), f.name); } catch (err) { aiStatus("Não importado: " + err.message, "err"); }

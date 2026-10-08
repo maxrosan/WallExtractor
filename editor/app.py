@@ -632,6 +632,31 @@ def faces_draft(pid: str) -> dict:
         raise HTTPException(422, f"o detector de faces não conseguiu ler esta planta ({type(exc).__name__}: {exc})")
 
 
+@app.post("/api/plans/{pid}/segformer", dependencies=[Depends(auth)])
+def segformer_draft(pid: str) -> dict:
+    """A new draft from the base render with the raster model in use (SegFormer, PUT /api/model) and the
+    wall cleanup (wallextractor.vectorize.clean_plan), for any plan, vector or scanned. Not saved: the page
+    loads it like an imported answer, so the reviewer can undo it."""
+    from wallextractor.infer import segment_image
+    from wallextractor.vectorize import clean_plan, mask_to_plan
+
+    if store.get(pid) is None or not os.path.isfile(store.render_path(pid)):
+        raise HTTPException(404)
+    if not os.path.isfile(MODEL):
+        raise HTTPException(422, "não há modelo raster no servidor (PUT /api/model)")
+    rgb = np.asarray(Image.open(store.render_path(pid)).convert("RGB"))
+    try:
+        plan = clean_plan(mask_to_plan(segment_image(_get_segmenter(), rgb, size=768), kind="raster"))
+    except Exception as exc:  # noqa: BLE001 - reported to the page, not a 500
+        raise HTTPException(422, f"o SegFormer não conseguiu ler esta planta ({type(exc).__name__}: {exc})")
+    if len(plan.walls) < 4:
+        raise HTTPException(422, f"o SegFormer só achou {len(plan.walls)} parede(s) nesta planta; a tela não foi trocada")
+    d = plan.to_dict()
+    sha = _model_info().get("sha256", "")[:8]
+    return {"plan_id": pid, "image": {"width": rgb.shape[1], "height": rgb.shape[0]}, "walls": d["walls"],
+            "openings": d["openings"], "notas": f"SegFormer {sha} + limpeza das paredes"}
+
+
 @app.post("/api/ai/batch", dependencies=[Depends(auth)])
 def ai_batch(body: Dict[str, Any]):
     """One zip with a full package per plan (one folder each) and batch instructions at the root, for a
