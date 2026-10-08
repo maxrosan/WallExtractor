@@ -85,13 +85,35 @@ def set_max_patches(processor, n: int) -> None:
         ip.max_patches = n
 
 
-def build_model(name: str, r: int, alpha: int, dropout: float, grad_ckpt: bool = True, max_patches: int = 0):
+def quant_config():
+    """4-bit NF4 for the language model (QLoRA); the vision tower, merger and output head stay in bf16.
+    Needs bitsandbytes (image we-vlm-bnb on Pichau)."""
+    from transformers import BitsAndBytesConfig
+
+    return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+                              bnb_4bit_compute_dtype=torch.bfloat16,
+                              llm_int8_skip_modules=["visual", "vision_tower", "multi_modal_projector", "merger",
+                                                     "lm_head"])
+
+
+def load_base(name: str, load_4bit: bool = False):
+    """The image-text model in bf16, or with a 4-bit language model already on the GPU."""
+    from transformers import AutoModelForImageTextToText
+
+    if load_4bit:
+        return AutoModelForImageTextToText.from_pretrained(name, dtype=torch.bfloat16, attn_implementation="sdpa",
+                                                           quantization_config=quant_config(), device_map={"": 0})
+    return AutoModelForImageTextToText.from_pretrained(name, dtype=torch.bfloat16, attn_implementation="sdpa")
+
+
+def build_model(name: str, r: int, alpha: int, dropout: float, grad_ckpt: bool = True, max_patches: int = 0,
+                load_4bit: bool = False):
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoProcessor
 
     processor = AutoProcessor.from_pretrained(name)
     set_max_patches(processor, max_patches)
-    model = AutoModelForImageTextToText.from_pretrained(name, dtype=torch.bfloat16, attn_implementation="sdpa")
+    model = load_base(name, load_4bit)
     for p in model.parameters():
         p.requires_grad_(False)
     if grad_ckpt:
@@ -124,8 +146,10 @@ def train(a) -> Dict:
     random.seed(a.seed)
     device = "cuda"
     os.makedirs(a.out, exist_ok=True)
-    model, processor = build_model(a.model, a.lora_r, a.lora_alpha, a.lora_dropout, max_patches=a.max_patches)
-    model.to(device)
+    model, processor = build_model(a.model, a.lora_r, a.lora_alpha, a.lora_dropout, max_patches=a.max_patches,
+                                   load_4bit=a.load_4bit)
+    if not a.load_4bit:  # a 4-bit model is placed on the GPU when loaded
+        model.to(device)
     model.print_trainable_parameters()
     enc = Encoder(processor, a.data, a.max_len)
     train_rows = load_rows(os.path.join(a.data, "train.jsonl"), a.limit_train)
@@ -203,6 +227,7 @@ def main(argv=None) -> int:
     ap.add_argument("--lora-dropout", type=float, default=0.05)
     ap.add_argument("--max-len", type=int, default=4096)
     ap.add_argument("--max-patches", type=int, default=0, help="tiles per image for tile-based processors (InternVL)")
+    ap.add_argument("--load-4bit", action="store_true", help="QLoRA: language model in 4-bit NF4 (needs bitsandbytes)")
     ap.add_argument("--max-minutes", type=float, default=0)
     ap.add_argument("--limit-train", type=int, default=0)
     ap.add_argument("--limit-val", type=int, default=0)

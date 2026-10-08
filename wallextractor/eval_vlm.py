@@ -31,20 +31,23 @@ from .vlm_data import decode_text
 from .vlm_metrics import f1, length_counts, match_openings, match_walls  # noqa: F401 (re-exported)
 
 
-def load(model_name: str, adapter: str = None):
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+def load(model_name: str, adapter: str = None, load_4bit: bool = False):
+    from transformers import AutoProcessor
+
+    from .train_vlm import load_base
 
     if adapter:
         cfg = json.load(open(os.path.join(adapter, "adapter_config.json"), encoding="utf-8"))
         model_name = cfg.get("base_model_name_or_path") or model_name
     processor = AutoProcessor.from_pretrained(adapter if adapter and os.path.isfile(
         os.path.join(adapter, "preprocessor_config.json")) else model_name)
-    model = AutoModelForImageTextToText.from_pretrained(model_name, dtype=torch.bfloat16, attn_implementation="sdpa")
+    model = load_base(model_name, load_4bit)
     if adapter:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter)
-        model = model.merge_and_unload()
-    return model.to("cuda").eval(), processor
+        if not load_4bit:  # merging into 4-bit weights would round the LoRA away; keep the adapter on top
+            model = model.merge_and_unload()
+    return (model if load_4bit else model.to("cuda")).eval(), processor
 
 
 @torch.no_grad()
@@ -63,6 +66,7 @@ def main(argv=None) -> int:
     ap.add_argument("--split", default="val")
     ap.add_argument("--source", default=None, help="only rows of this source (editor / cubicasa)")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--load-4bit", action="store_true", help="base model in 4-bit, as trained with train_vlm --load-4bit")
     ap.add_argument("--plans", default=None, help="only these plans: a list file (one id per line) or ids with commas")
     ap.add_argument("--max-new-tokens", type=int, default=3000)
     ap.add_argument("--tols", default="0.015,0.05")
@@ -79,7 +83,7 @@ def main(argv=None) -> int:
         rows = [r for r in rows if r.get("plan") in keep]
     if a.limit:
         rows = rows[:a.limit]
-    model, processor = load(a.model, a.adapter)
+    model, processor = load(a.model, a.adapter, a.load_4bit)
     tols = [float(t) for t in a.tols.split(",")]
     tot = {t: {k: [0, 0, 0] for k in ("wall", "door", "window")} for t in tols}
     lens = {t: [0, 0, 0, 0] for t in tols}
