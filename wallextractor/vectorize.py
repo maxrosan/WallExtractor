@@ -115,6 +115,62 @@ def mask_to_plan(mask: np.ndarray, source_file: str = "", page: int = 1, kind: s
     )
 
 
+def clean_walls(walls: List[dict], openings: List[dict]) -> List[dict]:
+    """Generic geometry on a raster draft, no drawing-style rules: segments within 6 degrees of an axis are
+    snapped to it (openings too, in place), collinear pieces merged, loose stubs dropped, corners joined, walls
+    cut at the openings and split at every junction, as the editor's convention asks (``wallextractor.faces``).
+    Walls and openings are dicts with ``start``/``end`` (and ``thickness`` for walls). On the 7 validation
+    plans no model saw, wall F1 by endpoints at 1.5% went from 0.15 to 0.56, length unchanged
+    (docs/experimentos.md, 2026-10-07)."""
+    import math
+    import statistics
+
+    from . import faces as F
+
+    if not walls:
+        return walls
+    ws = [dict(w, start=list(w["start"]), end=list(w["end"])) for w in walls]
+    t = statistics.median(w["thickness"] for w in ws) or 8.0
+    for x in ws + openings:
+        a = math.degrees(math.atan2(x["end"][1] - x["start"][1], x["end"][0] - x["start"][0])) % 180
+        if min(a, 180 - a) <= 6:
+            m = (x["start"][1] + x["end"][1]) / 2
+            x["start"] = [x["start"][0], m]
+            x["end"] = [x["end"][0], m]
+        elif abs(a - 90) <= 6:
+            m = (x["start"][0] + x["end"][0]) / 2
+            x["start"] = [m, x["start"][1]]
+            x["end"] = [m, x["end"][1]]
+    ws = F.mesclar_colineares(ws, t)
+    ws, _ = F.remover_isoladas(ws, t)
+    ws = F.ligar_cantos(ws, t)
+    ws = F.cortar_nos_vaos(ws, openings, t)
+    ws = F.remover_paredes_em_vaos(ws, openings, t)
+    ws = F.ligar_cantos(ws, t)
+    ws = F.dividir_nos_encontros(ws, t, aberturas=openings)
+    return F.remover_degeneradas(ws, t)
+
+
+def clean_plan(plan: WallPlan) -> WallPlan:
+    """``clean_walls`` on a WallPlan: walls rebuilt (polygons dropped), openings snapped and linked to the
+    nearest collinear wall."""
+    from . import faces as F
+
+    ops = [{"start": list(o.start), "end": list(o.end)} for o in plan.openings]
+    ws = clean_walls([{"id": w.id, "start": list(w.start), "end": list(w.end), "thickness": w.thickness}
+                      for w in plan.walls], ops)
+    if ws:
+        import statistics
+        F.atribuir_wall_id(ops, ws, statistics.median(w["thickness"] for w in ws))
+    plan.walls = [Wall(id=f"w{i}", start=tuple(w["start"]), end=tuple(w["end"]), thickness=float(w["thickness"]))
+                  for i, w in enumerate(ws, 1)]
+    ids = {w["id"]: f"w{i}" for i, w in enumerate(ws, 1)}
+    for o, d in zip(plan.openings, ops):
+        o.start, o.end = tuple(d["start"]), tuple(d["end"])
+        o.wall_id = ids.get(d.get("wall_id"))
+    return plan
+
+
 def draw_plan(image: np.ndarray, plan: WallPlan) -> np.ndarray:
     """Overlay walls (red) and openings (door green, window blue) on an RGB image."""
     out = image.copy()

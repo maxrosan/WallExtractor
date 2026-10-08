@@ -42,36 +42,11 @@ def raster(onnx_path: str, size: int):
 
 
 def cleanup(plan: dict) -> dict:
-    """Generic geometry on a raster draft (no drawing-style rules): near-axis segments snapped to the axis, then
-    the face detector's merging of collinear pieces, corner joining, cutting at openings and splitting at every
-    junction, as the editor's convention asks (wallextractor.faces)."""
-    import math
-    import statistics
+    """The editor's cleanup of raster drafts (``wallextractor.vectorize.clean_walls``)."""
+    from wallextractor.vectorize import clean_walls
 
-    from wallextractor import faces as F
-
-    ws = [dict(w, start=list(w["start"]), end=list(w["end"])) for w in plan["walls"]]
     ops = [dict(o, start=list(o["start"]), end=list(o["end"])) for o in plan["openings"]]
-    if not ws:
-        return plan
-    t = statistics.median(w["thickness"] for w in ws) or 8.0
-    for x in ws + ops:  # snap: Hough segments come a degree or two off the axis
-        a = math.degrees(math.atan2(x["end"][1] - x["start"][1], x["end"][0] - x["start"][0])) % 180
-        if min(a, 180 - a) <= 6:
-            m = (x["start"][1] + x["end"][1]) / 2
-            x["start"][1] = x["end"][1] = m
-        elif abs(a - 90) <= 6:
-            m = (x["start"][0] + x["end"][0]) / 2
-            x["start"][0] = x["end"][0] = m
-    ws = F.mesclar_colineares(ws, t)
-    ws, _ = F.remover_isoladas(ws, t)
-    ws = F.ligar_cantos(ws, t)
-    ws = F.cortar_nos_vaos(ws, ops, t)
-    ws = F.remover_paredes_em_vaos(ws, ops, t)
-    ws = F.ligar_cantos(ws, t)
-    ws = F.dividir_nos_encontros(ws, t, aberturas=ops)
-    ws = F.remover_degeneradas(ws, t)
-    return {"walls": ws, "openings": ops}
+    return {"walls": clean_walls(plan["walls"], ops), "openings": ops}
 
 
 def main(argv=None) -> int:

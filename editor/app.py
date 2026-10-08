@@ -68,7 +68,7 @@ def _extract(pdf_path: str, page: int) -> tuple[dict, np.ndarray, dict]:
     from wallextractor.infer import extract_vector, segment_image
     from wallextractor.pdf import render_page
     from wallextractor.vector_walls import _inside, page_segments, wall_pen_width
-    from wallextractor.vectorize import mask_to_plan
+    from wallextractor.vectorize import clean_plan, mask_to_plan
 
     meta: Dict[str, Any] = {"primitives": []}
     res = extract_vector(pdf_path, page=page, max_side=BASE_SIDE)
@@ -96,6 +96,10 @@ def _extract(pdf_path: str, page: int) -> tuple[dict, np.ndarray, dict]:
     if MODEL and os.path.isfile(MODEL):
         mask = segment_image(_get_segmenter(), rgb, size=768)
         plan = mask_to_plan(mask, source_file=os.path.basename(pdf_path), page=page, kind="raster")
+        try:  # merged, joined and split walls instead of the segmentation's fragments
+            plan = clean_plan(plan)
+        except Exception as exc:  # noqa: BLE001 - a cleanup failure keeps the plain draft
+            meta.setdefault("notes", []).append(f"limpeza do rascunho falhou ({type(exc).__name__}); paredes sem limpeza")
     else:
         plan = mask_to_plan(np.zeros(rgb.shape[:2], np.uint8), source_file=os.path.basename(pdf_path), page=page,
                             kind="raster")
