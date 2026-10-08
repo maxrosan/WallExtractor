@@ -697,3 +697,37 @@ A limpeza virou `vectorize.clean_plan` e o editor a aplica a todo rascunho
 raster desde 2026-10-08. Para o Qwen3-VL-8B (linguagem em 4 bits, QLoRA,
 `train_vlm --load-4bit`) há a imagem `we-vlm-bnb` (= `we-vlm` + bitsandbytes
 0.50.2) no Pichau; ele roda depois dos outros (`run_8b.sh`).
+
+### Resultados: Q3, Qwen3-VL-2B, E6/E7 e limpeza (2026-10-08)
+
+F1 a 1,5% do lado maior nas 17 plantas fixas. Rascunhos raster medidos com
+`scripts/eval_pipeline.py` (checkpoint PyTorch, entrada 768) com e sem
+`--cleanup`.
+
+| modelo | grupo | JSON válido | paredes (pontas) | paredes (comprimento) | portas | janelas |
+|---|---|---|---|---|---|---|
+| Q2 (Qwen 4B, 40 plantas) | 7 novas | 7/7 | 0,22 | 0,81 | 0,17 | 0,31 |
+| Q3 (Qwen 4B, 62 plantas, giros) | 7 novas | 6/7 | 0,19 | 0,82 | 0,15 | 0,26 |
+| Qwen3-VL-2B (receita do Q3) | 7 novas | 6/7 | 0,11 | 0,72 | 0,17 | 0,09 |
+| E6 | 7 novas | | 0,13 | 0,95 | 0,63 | 0,74 |
+| E6 + limpeza (editor hoje) | 7 novas | | 0,50 | 0,95 | 0,63 | 0,74 |
+| E7 (62 plantas) | 7 novas | | 0,12 | 0,97 | 0,41 | 0,68 |
+| E7 + limpeza | 7 novas | | 0,46 | 0,96 | 0,41 | 0,68 |
+| Q2 | 10 antigas | 10/10 | 0,23 | 0,73 | 0,35 | 0,30 |
+| Q3 | 10 antigas | 10/10 | 0,18 | 0,76 | 0,21 | 0,33 |
+| Qwen3-VL-2B | 10 antigas | 8/10 | 0,11 | 0,67 | 0,18 | 0,03 |
+| E6 + limpeza | 10 antigas | | 0,45 | 0,93 | 0,45 | 0,51 |
+| E7 + limpeza | 10 antigas | | 0,41 | 0,92 | 0,39 | 0,55 |
+
+- O Q3 não melhora o Q2 (perda de validação 0,564 contra 0,578, mas F1 igual
+  ou pior): mais plantas, menos repetição e os giros não mudaram o quadro. O
+  2B é pior em tudo.
+- O E7 (mais 22 plantas, Bauru e Caraguatatuba no treino) acerta um pouco
+  mais de comprimento de parede, mas perde portas (0,63 -> 0,41 nas novas) e
+  janelas. Amostra de 7 plantas; o E6 continua no editor.
+- O rascunho raster com limpeza ganha de todos os VLM em todas as medidas.
+- InternVL3.5-4B (`--max-patches 6`): passa no teste curto, mas usa 17 GB numa
+  placa de 16 GB; a memória transborda para a RAM e cada passo leva ~10 min
+  (40 de 478 em 4 h 20). Interrompido; precisaria de menos blocos por imagem
+  ou de 4 bits.
+- Qwen3-VL-8B em 4 bits: em andamento (`run_8b.sh`).
