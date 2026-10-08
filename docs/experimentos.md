@@ -731,3 +731,12 @@ F1 a 1,5% do lado maior nas 17 plantas fixas. Rascunhos raster medidos com
   (40 de 478 em 4 h 20). Interrompido; precisaria de menos blocos por imagem
   ou de 4 bits.
 - Qwen3-VL-8B em 4 bits: em andamento (`run_8b.sh`).
+- Qwen3-VL-8B em 4 bits (QLoRA, receita do Q3; 4 h 54 min, pico 15,3 GB,
+  perda de validação 0,570): 7 novas 0,20 / 0,78 / 0,27 / 0,28 e 10 antigas
+  0,20 / 0,73 / 0,34 / 0,27 (pontas / comprimento / portas / janelas), JSON
+  válido em todas. Igual ao 4B, com portas um pouco melhores; continua bem
+  abaixo do E6 + limpeza.
+
+Conclusão desta rodada: com 62 plantas de treino, nenhum VLM (Qwen 2B, 4B,
+8B) chega perto do SegFormer com limpeza; o caminho principal passa a ser o
+rascunho raster, melhorando portas e janelas.

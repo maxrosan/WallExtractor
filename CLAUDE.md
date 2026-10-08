@@ -196,8 +196,14 @@ consomem o mesmo JSON.
   gabarito limpo): portas 167/179 com 11 falsas (F1 0,94), janelas 142/167
   com 17 falsas (F1 0,87). As 39 portas falsas herdadas da V2 foram tiradas
   das correções em 2026-10-03 (backup em `data/backup_before_rm/`).
-- Direção: o caminho principal é o modelo treinado nas correções (SegFormer
-  E5 e depois o Qwen-VL), não refinar heurísticas por estilo de desenho.
+- Direção (2026-10-08): o caminho principal é o SegFormer treinado nas
+  correções + `vectorize.clean_plan` (geometria genérica), não heurísticas por
+  estilo. Na validação fixa (`splits/val_editor.txt`, 17 plantas que nenhum
+  treino usa), o E6 + limpeza ganha de todos os VLM testados (Qwen3-VL 2B, 4B
+  e 8B em 4 bits; InternVL3.5-4B não coube nos 16 GB): nas 7 novas, paredes
+  0,50 (pontas) / 0,95 (comprimento), portas 0,63, janelas 0,74 contra no
+  máximo 0,20 / 0,82 / 0,27 / 0,31 dos VLM. Medir rascunhos com
+  `scripts/eval_pipeline.py` e VLMs com `eval_vlm --plans`.
 - Raster E6 (2026-10-05, publicado no editor): IoU nas 10 de validação
   (50 plantas) parede 0,837 / porta 0,746 / janela 0,824 (E5: 0,739 / 0,612
   / 0,694). Modelo em `/root/we/results_e6/best.onnx`.
@@ -210,10 +216,11 @@ consomem o mesmo JSON.
 
 ## Próximos passos
 
-1. Fixar um conjunto de teste de plantas que nenhum modelo vê (ex.: as 10 de
-   validação atuais) e só acrescentar plantas novas ao treino, para as
-   comparações não se contaminarem.
-2. Qwen: mais plantas de estilos variados antes de treinar de novo; repetição
-   menor; considerar o 8B com QLoRA se os dados crescerem.
-3. Ramo raster no editor: recortar a região da planta antes de segmentar
+1. Portas e janelas do rascunho raster (o ponto fraco): mais plantas
+   corrigidas de estilos variados (29 pendentes em 2026-10-08: BH, PNCP,
+   Caraguatatuba) e treino E8 na divisão fixa; o E7 (62 plantas) perdeu portas
+   para o E6, então comparar sempre na validação fixa antes de publicar.
+2. Ramo raster no editor: recortar a região da planta antes de segmentar
    (hoje moldura e carimbo viram "paredes") e segmentar em blocos.
+3. Qwen em segundo plano: só treinar de novo com bem mais dados (centenas de
+   plantas); adaptadores Q3, 2B e 8B em `/root/we/results_vlm/`.
