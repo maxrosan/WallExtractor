@@ -740,3 +740,32 @@ F1 a 1,5% do lado maior nas 17 plantas fixas. Rascunhos raster medidos com
 Conclusão desta rodada: com 62 plantas de treino, nenhum VLM (Qwen 2B, 4B,
 8B) chega perto do SegFormer com limpeza; o caminho principal passa a ser o
 rascunho raster, melhorando portas e janelas.
+
+### E8a e E8b: resolução 1024 e MiT-B2 (2026-10-10)
+
+80 plantas corrigidas, 63 no treino e as 17 fixas na validação; receita do
+E6 (80 épocas, limite de 5 h). E8a: MiT-B1 a 1024 px (80 épocas, 4 h 29 min).
+E8b: MiT-B2 a 768 px (76 épocas no limite). F1 a 1,5% com a limpeza:
+
+| modelo | grupo | paredes (pontas) | paredes (comprimento) | portas | janelas |
+|---|---|---|---|---|---|
+| E6 | 10 antigas | 0,45 | 0,93 | 0,45 | 0,51 |
+| E8a | 10 antigas | 0,46 | 0,93 | 0,48 | 0,67 |
+| E8b | 10 antigas | 0,44 | 0,93 | 0,46 | 0,58 |
+| E6 | 7 novas | 0,50 | 0,95 | 0,63 | 0,74 |
+| E8a | 7 novas | 0,46 | 0,96 | 0,34 | 0,73 |
+| E8b | 7 novas | 0,53 | 0,97 | 0,51 | 0,70 |
+
+Média pelas 17: portas E6 0,52, E8a 0,42, E8b 0,48; janelas 0,61 / 0,70 /
+0,63. Nenhum ganha do E6 nos dois grupos; o E6 continua no editor. Com ~90
+portas no teste, diferenças desse tamanho não são confiáveis: o próximo
+passo é ter mais plantas corrigidas, no treino e no teste fixo.
+
+Conferência das portas nas correções (`data/corr_e8`): Bauru, Caraguatatuba e
+o portfólio de SJC seguem a convenção (pontas nos batentes). Nas SJC
+vetoriais as portas parecem fora do padrão por uma medida ingênua (distância
+da ponta da porta até a ponta de parede mais próxima: mediana 1,6 espessura),
+mas é porque muitas ficam junto de um canto ou fecham entre duas paredes
+perpendiculares (entrada de nicho, fim do hall), terminando na face da parede
+que chega. As 20 "sem parede alinhada" foram vistas uma a uma: estão certas.
+Nada foi alterado.
